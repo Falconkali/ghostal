@@ -1,0 +1,70 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import { useRouter, usePathname } from "next/navigation";
+import Sidebar from "@/components/dashboard/sidebar";
+import Topbar from "@/components/dashboard/topbar";
+import AutomationRunner from "@/components/dashboard/automation-runner";
+import { cn } from "@/lib/utils";
+import { useAuth } from "@/hooks/use-auth";
+import { Loader2 } from "lucide-react";
+
+export default function DashboardLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  const { user, isLoading } = useAuth();
+  const router = useRouter();
+  const pathname = usePathname();
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  useEffect(() => {
+    if (!isLoading) {
+      if (!user) {
+        window.location.href = "/login";
+      } else if (pathname === "/onboarding") {
+        router.push("/dashboard");
+      }
+    }
+  }, [user, isLoading, pathname, router]);
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-3">
+        <Loader2 className="h-8 w-8 text-violet-500 animate-spin" />
+        <p className="text-sm text-zinc-400 font-medium">Validating session...</p>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return null;
+  }
+
+  return (
+    <div className="min-h-screen bg-background">
+      <AutomationRunner />
+      <Sidebar
+        collapsed={sidebarCollapsed}
+        onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
+        mobileOpen={mobileMenuOpen}
+        onMobileClose={() => setMobileMenuOpen(false)}
+      />
+      <Topbar
+        onMobileMenuToggle={() => setMobileMenuOpen(!mobileMenuOpen)}
+        sidebarCollapsed={sidebarCollapsed}
+      />
+      <main
+        className={cn(
+          "pt-16 min-h-screen transition-all duration-300 ml-0",
+          sidebarCollapsed ? "md:ml-16" : "md:ml-60"
+        )}
+      >
+        <div className="p-4 md:p-6 lg:p-8">{children}</div>
+      </main>
+    </div>
+  );
+}
+
