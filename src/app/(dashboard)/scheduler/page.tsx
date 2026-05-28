@@ -460,71 +460,86 @@ export default function SchedulerPage() {
       }
 
       let published = false;
+      let realErrorMessage = "";
 
       if (profile?.instagram_token && profile?.instagram_id && mediaUrl) {
-        try {
-          const containerParams: Record<string, string> = {
-            caption: post.caption,
-            access_token: profile.instagram_token,
-          };
-          if (post.type === "reel") {
-            containerParams.media_type = "REELS";
-            containerParams.video_url = mediaUrl;
-          } else {
-            containerParams.image_url = mediaUrl;
-          }
+        const containerParams: Record<string, string> = {
+          caption: post.caption,
+          access_token: profile.instagram_token,
+        };
+        if (post.type === "reel") {
+          containerParams.media_type = "REELS";
+          containerParams.video_url = mediaUrl;
+        } else {
+          containerParams.image_url = mediaUrl;
+        }
 
-          const containerRes = await fetch(
-            `https://graph.facebook.com/v21.0/${profile.instagram_id}/media`,
+        const containerRes = await fetch(
+          `https://graph.facebook.com/v21.0/${profile.instagram_id}/media`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams(containerParams),
+          }
+        );
+        const containerData = await containerRes.json();
+        console.log("Instagram container response:", JSON.stringify(containerData));
+
+        if (containerData.error) {
+          realErrorMessage = `Container error ${containerData.error.code}: ${containerData.error.message}`;
+          console.error("Instagram container error:", realErrorMessage);
+        } else {
+          const publishRes = await fetch(
+            `https://graph.facebook.com/v21.0/${profile.instagram_id}/media_publish`,
             {
               method: "POST",
               headers: { "Content-Type": "application/x-www-form-urlencoded" },
-              body: new URLSearchParams(containerParams),
+              body: new URLSearchParams({
+                creation_id: containerData.id,
+                access_token: profile.instagram_token,
+              }),
             }
           );
-          const containerData = await containerRes.json();
-          if (!containerData.error) {
-            const publishRes = await fetch(
-              `https://graph.facebook.com/v21.0/${profile.instagram_id}/media_publish`,
-              {
-                method: "POST",
-                headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                body: new URLSearchParams({
-                  creation_id: containerData.id,
-                  access_token: profile.instagram_token,
-                }),
-              }
-            );
-            const publishData = await publishRes.json();
-            if (!publishData.error) published = true;
+          const publishData = await publishRes.json();
+          console.log("Instagram publish response:", JSON.stringify(publishData));
+
+          if (publishData.error) {
+            realErrorMessage = `Publish error ${publishData.error.code}: ${publishData.error.message}`;
+            console.error("Instagram publish error:", realErrorMessage);
+          } else {
+            published = true;
           }
-        } catch (apiErr) {
-          console.warn("Real publish failed, falling back to simulation:", apiErr);
-          published = true; // sandbox fallback
         }
       } else {
-        published = true; // simulation mode
+        published = true; // simulation mode — no token/media
       }
 
+      // Update DB status
+      const newStatus = published ? "posted" : "failed";
       const { error } = await supabase
         .from("scheduled_posts")
-        .update({ status: "posted" })
+        .update({ status: newStatus })
         .eq("id", postId);
 
       if (error) throw error;
 
       setScheduledPosts((prev) => {
         const next = prev.map((p) =>
-          p.id === postId ? { ...p, status: "posted" as const } : p
+          p.id === postId ? { ...p, status: newStatus as any } : p
         );
         localStorage.setItem("ghostflow_scheduled_posts", JSON.stringify(next));
         return next;
       });
       setActiveActionMenuId(null);
-      showToast(published ? "Post published to Instagram!" : "Failed to publish — updated status only", "success");
+
+      if (published) {
+        showToast("Post published to Instagram! ✅", "success");
+      } else {
+        showToast(`❌ ${realErrorMessage || "Failed to publish to Instagram"}`, "error");
+      }
     } catch (err: any) {
       console.error("Error publishing post:", err);
-      showToast("Failed to publish post", "error");
+      showToast(`Error: ${err.message}`, "error");
     }
   };
 
