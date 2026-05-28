@@ -101,7 +101,7 @@ export async function checkAndPublishDuePosts(userId: string, client = supabase)
         console.log(`Attempting real Instagram publish for post ${post.id}...`);
         
         // 1. Create Media Container
-        const containerUrl = `https://graph.facebook.com/v21.0/${profile.instagram_id}/media`;
+        const containerUrl = `https://graph.instagram.com/v21.0/${profile.instagram_id}/media`;
         const containerParams: Record<string, string> = {
           caption: post.caption,
           access_token: profile.instagram_token,
@@ -135,7 +135,7 @@ export async function checkAndPublishDuePosts(userId: string, client = supabase)
             // Wait 2 seconds
             await new Promise((resolve) => setTimeout(resolve, 2000));
             const statusRes = await fetch(
-              `https://graph.facebook.com/v21.0/${creationId}?fields=status_code&access_token=${profile.instagram_token}`
+              `https://graph.instagram.com/v21.0/${creationId}?fields=status_code&access_token=${profile.instagram_token}`
             );
             const statusData = await statusRes.json();
             if (statusData.status_code === "FINISHED") {
@@ -149,7 +149,7 @@ export async function checkAndPublishDuePosts(userId: string, client = supabase)
         }
 
         // 3. Publish the container
-        const publishUrl = `https://graph.facebook.com/v21.0/${profile.instagram_id}/media_publish`;
+        const publishUrl = `https://graph.instagram.com/v21.0/${profile.instagram_id}/media_publish`;
         const publishRes = await fetch(publishUrl, {
           method: "POST",
           headers: { "Content-Type": "application/x-www-form-urlencoded" },
