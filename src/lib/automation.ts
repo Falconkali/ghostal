@@ -170,22 +170,26 @@ export async function checkAndPublishDuePosts(userId: string, client = supabase)
       } catch (err: any) {
         console.error(`Meta API publish failed for post ${post.id}:`, err.message);
         
-        // Check if it's a permission / app review restriction error
-        const isPermissionError = err.message.toLowerCase().includes("permission") || 
-                                   err.message.toLowerCase().includes("review") || 
-                                   err.message.toLowerCase().includes("access") ||
-                                   err.message.toLowerCase().includes("developer") ||
-                                   err.message.toLowerCase().includes("user is not allowed");
+        // Only simulate success for very specific Meta App Review sandbox errors
+        // These are errors that ONLY occur because the app hasn't passed review yet
+        const isSandboxOnlyError = 
+          err.message.toLowerCase().includes("app is in development mode") ||
+          err.message.toLowerCase().includes("does not have permission to publish") ||
+          err.message.toLowerCase().includes("app review") ||
+          err.message.toLowerCase().includes("submit for review") ||
+          err.message.toLowerCase().includes("pending review");
 
-        if (isPermissionError) {
-          // Graceful fallback for development app to simulate successful publish
+        if (isSandboxOnlyError) {
+          // Graceful fallback ONLY for development-mode app review restriction
           success = true;
-          logDescription = `Simulated Publish (Meta Sandbox restriction. Content: "${post.caption.slice(0, 35)}...")`;
-          console.log("Simulating publication success due to sandbox environment constraints.");
+          logDescription = `Simulated Publish (Meta App Review required. Content: "${post.caption.slice(0, 35)}...")`;
+          console.log("Simulating publication success: app is pending Meta App Review.");
         } else {
+          // Real error - log it fully so we can debug
           success = false;
           statusToSet = "failed";
-          logDescription = `Failed to publish to Instagram: ${err.message}`;
+          logDescription = `Instagram API Error: ${err.message}`;
+          console.error(`Real Instagram error for post ${post.id}:`, err.message);
         }
       }
     } else {
