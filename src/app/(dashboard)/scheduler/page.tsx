@@ -475,7 +475,7 @@ export default function SchedulerPage() {
         }
 
         const containerRes = await fetch(
-          `https://graph.facebook.com/v21.0/${profile.instagram_id}/media`,
+          `https://graph.instagram.com/v21.0/${profile.instagram_id}/media`,
           {
             method: "POST",
             headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -490,7 +490,7 @@ export default function SchedulerPage() {
           console.error("Instagram container error:", realErrorMessage);
         } else {
           const publishRes = await fetch(
-            `https://graph.facebook.com/v21.0/${profile.instagram_id}/media_publish`,
+            `https://graph.instagram.com/v21.0/${profile.instagram_id}/media_publish`,
             {
               method: "POST",
               headers: { "Content-Type": "application/x-www-form-urlencoded" },
