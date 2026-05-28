@@ -104,16 +104,19 @@ export async function GET(request: NextRequest) {
 
     const longLivedToken = longLivedData.access_token;
 
-    // 3. Fetch the Instagram username
-    const profileRes = await fetch(`https://graph.instagram.com/v21.0/me?fields=username&access_token=${longLivedToken}`);
+    // 3. Fetch the Instagram username AND correct user ID from the long-lived token
+    const profileRes = await fetch(`https://graph.instagram.com/v21.0/me?fields=id,username&access_token=${longLivedToken}`);
     const profileData = await profileRes.json();
 
     if (profileData.error) {
-      console.error("Fetch Instagram username error:", profileData.error);
-      return NextResponse.redirect(`${redirectUrl}?error=${encodeURIComponent(profileData.error.message || "Failed to fetch username")}`);
+      console.error("Fetch Instagram profile error:", profileData.error);
+      return NextResponse.redirect(`${redirectUrl}?error=${encodeURIComponent(profileData.error.message || "Failed to fetch Instagram profile")}`);
     }
 
     const instagramHandle = profileData.username;
+    // Use the ID returned by the me endpoint — this is the correct Instagram User ID
+    // for publishing via graph.instagram.com (NOT the app-scoped ID from tokenData.user_id)
+    const realInstagramId = profileData.id || String(instagramUserId);
 
     // 4. Save to Supabase profiles table
     const { error: updateError } = await supabase
@@ -122,7 +125,7 @@ export async function GET(request: NextRequest) {
         instagram_connected: true,
         instagram_handle: instagramHandle,
         instagram_token: longLivedToken,
-        instagram_id: String(instagramUserId),
+        instagram_id: realInstagramId,
       })
       .eq("id", user.id);
 
