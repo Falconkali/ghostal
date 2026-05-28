@@ -489,25 +489,54 @@ export default function SchedulerPage() {
           realErrorMessage = `Container error ${containerData.error.code}: ${containerData.error.message}`;
           console.error("Instagram container error:", realErrorMessage);
         } else {
-          const publishRes = await fetch(
-            `https://graph.instagram.com/v21.0/${profile.instagram_id}/media_publish`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/x-www-form-urlencoded" },
-              body: new URLSearchParams({
-                creation_id: containerData.id,
-                access_token: profile.instagram_token,
-              }),
-            }
-          );
-          const publishData = await publishRes.json();
-          console.log("Instagram publish response:", JSON.stringify(publishData));
+          const creationId = containerData.id;
 
-          if (publishData.error) {
-            realErrorMessage = `Publish error ${publishData.error.code}: ${publishData.error.message}`;
-            console.error("Instagram publish error:", realErrorMessage);
-          } else {
-            published = true;
+          // Poll container status — Instagram needs time to process the image
+          // before we can publish it (fixes error 9007: Media ID not available)
+          let containerReady = false;
+          for (let attempt = 0; attempt < 10; attempt++) {
+            await new Promise((resolve) => setTimeout(resolve, 3000)); // wait 3s
+            const statusRes = await fetch(
+              `https://graph.instagram.com/v21.0/${creationId}?fields=status_code&access_token=${profile.instagram_token}`
+            );
+            const statusData = await statusRes.json();
+            console.log(`Container status attempt ${attempt + 1}:`, statusData.status_code);
+            if (statusData.status_code === "FINISHED") {
+              containerReady = true;
+              break;
+            }
+            if (statusData.status_code === "ERROR") {
+              realErrorMessage = "Instagram container processing failed (ERROR status)";
+              break;
+            }
+            // IN_PROGRESS — keep polling
+          }
+
+          if (!containerReady && !realErrorMessage) {
+            realErrorMessage = "Instagram container timed out — image may be too large or URL unreachable";
+          }
+
+          if (containerReady) {
+            const publishRes = await fetch(
+              `https://graph.instagram.com/v21.0/${profile.instagram_id}/media_publish`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                body: new URLSearchParams({
+                  creation_id: creationId,
+                  access_token: profile.instagram_token,
+                }),
+              }
+            );
+            const publishData = await publishRes.json();
+            console.log("Instagram publish response:", JSON.stringify(publishData));
+
+            if (publishData.error) {
+              realErrorMessage = `Publish error ${publishData.error.code}: ${publishData.error.message}`;
+              console.error("Instagram publish error:", realErrorMessage);
+            } else {
+              published = true;
+            }
           }
         }
       } else {
