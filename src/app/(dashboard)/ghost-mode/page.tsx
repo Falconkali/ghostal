@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Ghost,
@@ -103,6 +103,7 @@ export default function GhostModePage() {
   const [engineResult, setEngineResult] = useState<AutomationRunResult | null>(null);
   const [isForceRunning, setIsForceRunning] = useState(false);
   const [forceRunResult, setForceRunResult] = useState<string | null>(null);
+  const [forceRunProgress, setForceRunProgress] = useState<string | null>(null);
 
   // Survival Logs (live from DB)
   const [survivalLogs, setSurvivalLogs] = useState<SurvivalLog[]>([]);
@@ -159,7 +160,7 @@ export default function GhostModePage() {
   // ──────────────────────────────────────────────
   // Fetch recent survival logs
   // ──────────────────────────────────────────────
-  const fetchLogs = async () => {
+  const fetchLogs = useCallback(async () => {
     if (!user) return;
     const { data } = await supabase
       .from("survival_logs")
@@ -180,7 +181,7 @@ export default function GhostModePage() {
         }))
       );
     }
-  };
+  }, [user]);
 
   // ──────────────────────────────────────────────
   // Listen to AutomationRunner broadcasts
@@ -197,15 +198,27 @@ export default function GhostModePage() {
       setMonitorSecsAgo(0);
       setRefillSecsAgo(0);
 
-      // Refresh logs if something happened
+      // Refresh logs and optionally notify if something happened
       if (result.publishedCount > 0 || result.resurrectedPost) {
         fetchLogs();
+        if (config.notifyOnActivation && "Notification" in window) {
+          Notification.requestPermission().then((perm) => {
+            if (perm === "granted") {
+              new Notification("GhostFlow Automation", {
+                body: `Ghost Mode active: ${result.publishedCount} post${
+                  result.publishedCount !== 1 ? "s" : ""
+                } published${result.resurrectedPost ? ", 1 content resurrected" : ""}.`,
+                icon: "/favicon.ico",
+              });
+            }
+          });
+        }
       }
     };
 
     window.addEventListener("automation_run", handleAutomationRun);
     return () => window.removeEventListener("automation_run", handleAutomationRun);
-  }, [user]);
+  }, [config.notifyOnActivation, fetchLogs]);
 
   // ──────────────────────────────────────────────
   // Tick timers every second
@@ -224,6 +237,25 @@ export default function GhostModePage() {
     }, 1000);
     return () => clearInterval(interval);
   }, []);
+
+  // Supabase Realtime — auto-refresh logs when cron/background inserts a new survival_log
+  useEffect(() => {
+    if (!user) return;
+    const channel = supabase
+      .channel(`realtime-ghost-mode-${user.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "survival_logs",
+          filter: `user_id=eq.${user.id}`,
+        },
+        () => { fetchLogs(); }
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [user, fetchLogs]);
 
   // ──────────────────────────────────────────────
   // Formatters
@@ -273,6 +305,7 @@ export default function GhostModePage() {
     if (!user || isForceRunning) return;
     setIsForceRunning(true);
     setForceRunResult(null);
+    setForceRunProgress(null);
 
     try {
       // Import lazily to avoid circular issues
@@ -280,26 +313,54 @@ export default function GhostModePage() {
         "@/lib/automation"
       );
 
-      const publishedIds = await checkAndPublishDuePosts(user.id);
+      setForceRunProgress("Checking for due posts...");
+      const publishedIds = await checkAndPublishDuePosts(
+        user.id,
+        supabase,
+        (msg) => setForceRunProgress(msg)
+      );
 
       let resurrectedPost = null;
       if (config.enabled) {
+        setForceRunProgress("Checking queue health...");
         resurrectedPost = await runAISurvivalRefill(
           user.id,
           config.inactivityThresholdDays,
-          config.preserveHashtags
+          config.preserveHashtags,
+          supabase,
+          {
+            // If Emergency Survival Mode is ON, bypass the queue >= 3 gate
+            forceRefill: config.emergencySurvivalMode,
+            aiFallbackBehavior: config.aiFallbackBehavior,
+            maxSurvivalPostsPerWeek: config.maxSurvivalPostsPerWeek,
+          }
         );
       }
 
-      // Write a manual trigger log
-      await supabase.from("survival_logs").insert({
-        user_id: user.id,
-        action: "Manual Trigger",
-        description: `Manual automation cycle: ${publishedIds.length} post${
-          publishedIds.length !== 1 ? "s" : ""
-        } published, ${resurrectedPost ? "1 content resurrected" : "no resurrection needed"}.`,
-        status: "success",
-      });
+      // Only write a log entry if something actually happened (prevents log spam)
+      if (publishedIds.length > 0 || resurrectedPost) {
+        await supabase.from("survival_logs").insert({
+          user_id: user.id,
+          action: "Manual Trigger",
+          description: `Manual cycle: ${publishedIds.length} post${
+            publishedIds.length !== 1 ? "s" : ""
+          } published, ${resurrectedPost ? "1 content resurrected" : "no resurrection needed"}.`,
+          status: "success",
+        });
+
+        // Browser notification if user opted in
+        if (config.notifyOnActivation && "Notification" in window) {
+          const perm = await Notification.requestPermission();
+          if (perm === "granted") {
+            new Notification("GhostFlow Automation", {
+              body: `${publishedIds.length} post${
+                publishedIds.length !== 1 ? "s" : ""
+              } published${resurrectedPost ? ", 1 content resurrected" : ""}.`,
+              icon: "/favicon.ico",
+            });
+          }
+        }
+      }
 
       if (publishedIds.length > 0 || resurrectedPost) {
         setForceRunResult(
@@ -321,6 +382,7 @@ export default function GhostModePage() {
       setForceRunResult(`✗ Error: ${err.message || "Unknown error"}`);
     } finally {
       setIsForceRunning(false);
+      setForceRunProgress(null);
       setTimeout(() => setForceRunResult(null), 6000);
     }
   };
@@ -571,6 +633,21 @@ export default function GhostModePage() {
           </button>
         </div>
 
+        {/* Force Run Progress Toast */}
+        <AnimatePresence>
+          {isForceRunning && forceRunProgress && (
+            <motion.div
+              initial={{ opacity: 0, y: -6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              className="flex items-center gap-2 rounded-lg px-4 py-2.5 text-xs font-medium border bg-violet-500/5 border-violet-500/10 text-violet-300"
+            >
+              <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
+              {forceRunProgress}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Force Run Result Toast */}
         <AnimatePresence>
           {forceRunResult && (
@@ -609,7 +686,7 @@ export default function GhostModePage() {
                   <div className="flex flex-col min-w-0">
                     <div className="flex items-baseline gap-2 flex-wrap">
                       <span className="text-sm font-semibold text-white">Post Publisher</span>
-                      <span className="text-[10px] text-zinc-500 font-normal">Every 15s</span>
+                      <span className="text-[10px] text-zinc-500 font-normal">Every 5m</span>
                     </div>
                     <span className="text-xs text-zinc-400 mt-1 truncate">
                       {engineResult?.publisherMessage ?? "Waiting for first cycle..."}
@@ -647,7 +724,7 @@ export default function GhostModePage() {
                   <div className="flex flex-col min-w-0">
                     <div className="flex items-baseline gap-2 flex-wrap">
                       <span className="text-sm font-semibold text-white">Ghost Monitor</span>
-                      <span className="text-[10px] text-zinc-500 font-normal">Every 15s</span>
+                      <span className="text-[10px] text-zinc-500 font-normal">Every 5m</span>
                     </div>
                     <span
                       className={cn(
