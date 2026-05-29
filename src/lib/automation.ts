@@ -46,7 +46,7 @@ export function remixCaption(originalCaption: string, hashtags: string[], preser
   return remixed;
 }
 
-export async function checkAndPublishDuePosts(userId: string, client = supabase) {
+export async function checkAndPublishDuePosts(userId: string, client = supabase, onProgress?: (msg: string) => void) {
   const nowStr = new Date().toISOString();
   
   // 1. Fetch scheduled posts that are due
@@ -133,6 +133,7 @@ export async function checkAndPublishDuePosts(userId: string, client = supabase)
         // Skipping this causes error 9007: "Media ID is not available".
         let containerReady = false;
         for (let attempt = 0; attempt < 10; attempt++) {
+          onProgress?.(`Waiting for Instagram to process media (${attempt + 1}/10)...`);
           // Wait 3 seconds between each poll
           await new Promise((resolve) => setTimeout(resolve, 3000));
           const statusRes = await fetch(
@@ -141,6 +142,7 @@ export async function checkAndPublishDuePosts(userId: string, client = supabase)
           const statusData = await statusRes.json();
           console.log(`Container status attempt ${attempt + 1} for post ${post.id}:`, statusData.status_code);
           if (statusData.status_code === "FINISHED") {
+            onProgress?.(`Media ready — publishing to Instagram...`);
             containerReady = true;
             break;
           }
@@ -232,7 +234,17 @@ export async function checkAndPublishDuePosts(userId: string, client = supabase)
   return publishedIds;
 }
 
-export async function runAISurvivalRefill(userId: string, inactivityDays: number, preserveHashtags: boolean, client = supabase) {
+export async function runAISurvivalRefill(
+  userId: string,
+  inactivityDays: number,
+  preserveHashtags: boolean,
+  client = supabase,
+  options?: {
+    forceRefill?: boolean;           // bypass the queueCount >= 3 gate
+    aiFallbackBehavior?: string;     // repost_evergreen | remix_captions | full_ai
+    maxSurvivalPostsPerWeek?: number; // weekly resurrection cap
+  }
+) {
   // 1. Check current scheduled queue size (future posts)
   const nowStr = new Date().toISOString();
   const { count, error: countError } = await client
@@ -249,9 +261,23 @@ export async function runAISurvivalRefill(userId: string, inactivityDays: number
 
   const queueCount = count || 0;
 
-  // If queue is healthy (>= 3 posts), do nothing
-  if (queueCount >= 3) {
+  // If queue is healthy (>= 3 posts) AND not force-running, do nothing
+  if (!options?.forceRefill && queueCount >= 3) {
     return null;
+  }
+
+  // Enforce the weekly resurrection cap (maxSurvivalPostsPerWeek)
+  if (options?.maxSurvivalPostsPerWeek && options.maxSurvivalPostsPerWeek > 0) {
+    const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const { count: weekCount } = await client
+      .from("survival_logs")
+      .select("*", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .eq("action", "Content Resurrected")
+      .gte("timestamp", weekAgo);
+    if ((weekCount || 0) >= options.maxSurvivalPostsPerWeek) {
+      return null; // weekly cap reached
+    }
   }
 
   // 2. If queue is low, we need to resurrect content!
@@ -339,10 +365,14 @@ export async function runAISurvivalRefill(userId: string, inactivityDays: number
     newScheduleDate.setHours(newScheduleDate.getHours() + 12);
   }
 
-  // 4. Remix caption
+  // 4. Generate caption based on aiFallbackBehavior setting:
+  //    repost_evergreen → use original caption unmodified
+  //    remix_captions / full_ai → apply AI remix template (default)
   const originalCaption = candidate.default_caption || "";
   const hashtags = candidate.tags || [];
-  const remixed = remixCaption(originalCaption, hashtags, preserveHashtags);
+  const remixed = options?.aiFallbackBehavior === "repost_evergreen"
+    ? originalCaption
+    : remixCaption(originalCaption, hashtags, preserveHashtags);
 
   // 5. Insert new scheduled post
   const { data: newPost, error: insertError } = await client
