@@ -132,7 +132,7 @@ export default function VaultPage() {
           if (saved) {
             setVaultItems(JSON.parse(saved));
           } else {
-            setVaultItems(mockVaultItems);
+            setVaultItems([]);
           }
         } else if (data && data.length > 0) {
           const mapped: VaultItem[] = data.map((d: any) => ({
