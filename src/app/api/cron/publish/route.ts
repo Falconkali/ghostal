@@ -3,6 +3,8 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { checkAndPublishDuePosts, runAISurvivalRefill } from "@/lib/automation";
 
 export const runtime = "nodejs";
+export const maxDuration = 300; // 5 minutes — needed for Instagram container polling (up to 30s per post)
+
 
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get("authorization");
