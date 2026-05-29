@@ -112,7 +112,12 @@ export default function AutomationRunner() {
           resurrectedPost = await runAISurvivalRefill(
             user.id,
             config.inactivityThresholdDays || 3,
-            config.preserveHashtags !== false
+            config.preserveHashtags !== false,
+            supabase,
+            {
+              aiFallbackBehavior: config.aiFallbackBehavior,
+              maxSurvivalPostsPerWeek: config.maxSurvivalPostsPerWeek,
+            }
           );
         }
 
