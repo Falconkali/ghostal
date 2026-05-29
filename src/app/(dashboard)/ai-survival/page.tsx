@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Brain,
@@ -59,7 +59,7 @@ export default function AISurvivalPage() {
   const [applyingId, setApplyingId] = useState<string | null>(null);
   const [queueCount, setQueueCount] = useState(0);
 
-  const fetchSurvivalData = async () => {
+  const fetchSurvivalData = useCallback(async () => {
     if (!user) return;
     try {
       // 1. Fetch survival logs
@@ -239,15 +239,46 @@ export default function AISurvivalPage() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [user]);
 
+  // Initial load
   useEffect(() => {
     fetchSurvivalData();
+  }, [fetchSurvivalData]);
 
-    // Listen to automation runner updates
-    window.addEventListener("automation_run", fetchSurvivalData);
-    return () => window.removeEventListener("automation_run", fetchSurvivalData);
-  }, [user]);
+  // Listen to client-side automation runner broadcasts
+  useEffect(() => {
+    if (!user) return;
+    const handleSync = () => { fetchSurvivalData(); };
+    window.addEventListener("automation_run", handleSync);
+    return () => window.removeEventListener("automation_run", handleSync);
+  }, [user, fetchSurvivalData]);
+
+  // Supabase Realtime subscription — fires whenever the backend cron job
+  // inserts a new row into survival_logs (e.g. after publishing a scheduled post)
+  useEffect(() => {
+    if (!user) return;
+
+    const channel = supabase
+      .channel(`realtime-ai-survival-${user.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "survival_logs",
+          filter: `user_id=eq.${user.id}`,
+        },
+        () => {
+          fetchSurvivalData();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user, fetchSurvivalData]);
 
   const handleApplySuggestion = async (suggestion: AISuggestion) => {
     if (!user || !suggestion.vaultItemId) return;
