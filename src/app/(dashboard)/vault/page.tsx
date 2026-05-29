@@ -206,15 +206,7 @@ export default function VaultPage() {
     if (!user) return;
     if (!confirm("Are you sure you want to delete this vault item? This will also remove it from any future schedule queues.")) return;
     try {
-      // Cleanup file in Supabase Storage if present
-      const targetItem = vaultItems.find((i) => i.id === itemId);
-      if (targetItem && targetItem.mediaUrl) {
-        const urlParts = targetItem.mediaUrl.split("/vault-media/");
-        if (urlParts.length > 1) {
-          const storagePath = urlParts[1];
-          await supabase.storage.from("vault-media").remove([storagePath]);
-        }
-      }
+      // Note: file is on Cloudinary — no Supabase storage cleanup needed
 
       const { error } = await supabase
         .from("vault_items")
@@ -231,7 +223,6 @@ export default function VaultPage() {
 
       setSelectedIds((prev) => prev.filter((id) => id !== itemId));
       showToast("Vault item deleted successfully!", "success");
-      fetchStorageUsage();
     } catch (err: any) {
       console.error("Error deleting vault item:", err);
       showToast(err.message || "Failed to delete vault item", "error");
@@ -319,21 +310,7 @@ export default function VaultPage() {
     showToast("Bulk unlinking and deleting assets...", "info");
 
     try {
-      const selectedItems = vaultItems.filter((i) => selectedIds.includes(i.id));
-      const storagePathsToRemove: string[] = [];
-
-      selectedItems.forEach((item) => {
-        if (item.mediaUrl) {
-          const urlParts = item.mediaUrl.split("/vault-media/");
-          if (urlParts.length > 1) {
-            storagePathsToRemove.push(urlParts[1]);
-          }
-        }
-      });
-
-      if (storagePathsToRemove.length > 0) {
-        await supabase.storage.from("vault-media").remove(storagePathsToRemove);
-      }
+      // Note: files are on Cloudinary — no Supabase storage cleanup needed
 
       const { error } = await supabase
         .from("vault_items")
@@ -350,7 +327,6 @@ export default function VaultPage() {
 
       setSelectedIds([]);
       showToast("Selected items deleted successfully!", "success");
-      fetchStorageUsage();
     } catch (err: any) {
       console.error("Bulk delete failed:", err);
       showToast(err.message || "Failed bulk deletion", "error");
