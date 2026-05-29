@@ -29,7 +29,6 @@ import {
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
 import IntegrationRequired from "@/components/dashboard/integration-required";
-import { mockVaultItems } from "@/lib/mock-data";
 import type { VaultTag, VaultItem } from "@/types";
 import { supabase } from "@/lib/supabase";
 
@@ -103,10 +102,8 @@ export default function VaultPage() {
   const [isDbLoading, setIsDbLoading] = useState(true);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" | "info" } | null>(null);
 
-  // Bulk Selection and Storage States
+  // Bulk Selection State
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [usedStorageBytes, setUsedStorageBytes] = useState(0);
-  const [isCalculatingStorage, setIsCalculatingStorage] = useState(false);
   const [bulkMenuOpen, setBulkMenuOpen] = useState(false);
 
   const showToast = (message: string, type: "success" | "error" | "info" = "success") => {
@@ -114,31 +111,6 @@ export default function VaultPage() {
     setTimeout(() => {
       setToast(null);
     }, 4000);
-  };
-
-  // Fetch Supabase Storage bytes
-  const fetchStorageUsage = async () => {
-    if (!user) return;
-    setIsCalculatingStorage(true);
-    try {
-      const { data, error } = await supabase.storage
-        .from("vault-media")
-        .list(user.id);
-
-      if (error) {
-        console.warn("Storage list failed:", error.message);
-        return;
-      }
-
-      if (data) {
-        const totalSize = data.reduce((acc, file) => acc + (file.metadata?.size || 0), 0);
-        setUsedStorageBytes(totalSize);
-      }
-    } catch (e) {
-      console.warn("Error listing storage bytes:", e);
-    } finally {
-      setIsCalculatingStorage(false);
-    }
   };
 
   // Load vault items from Supabase
@@ -179,52 +151,9 @@ export default function VaultPage() {
           setVaultItems(mapped);
           localStorage.setItem("ghostflow_vault_items", JSON.stringify(mapped));
         } else {
-          // Seed DB with mock items
-          const { error: seedError } = await supabase
-            .from("vault_items")
-            .insert(
-              mockVaultItems.map((item) => ({
-                user_id: user.id,
-                title: item.title,
-                media_type: item.type,
-                default_caption: item.caption,
-                tags: item.tags,
-                is_evergreen: item.isEvergreen,
-                used_count: item.usedCount,
-                performance_score: item.performanceScore,
-                thumbnail_url: item.thumbnailUrl,
-                media_url: item.mediaUrl || item.thumbnailUrl || "https://picsum.photos/seed/default/400/400",
-              }))
-            );
-          
-          if (seedError) {
-            console.error("Error seeding mock items:", seedError);
-            setVaultItems(mockVaultItems);
-          } else {
-            const { data: refetched } = await supabase
-              .from("vault_items")
-              .select("*")
-              .eq("user_id", user.id)
-              .order("created_at", { ascending: false });
-            
-            if (refetched) {
-              const mapped = refetched.map((d: any) => ({
-                id: d.id,
-                type: d.media_type as any,
-                title: d.title || "Untitled Asset",
-                caption: d.default_caption || "",
-                tags: d.tags || [],
-                mediaUrl: d.media_url || undefined,
-                thumbnailUrl: d.thumbnail_url || undefined,
-                createdAt: d.created_at,
-                usedCount: d.used_count || 0,
-                performanceScore: d.performance_score || 80,
-                isEvergreen: d.is_evergreen || false,
-              }));
-              setVaultItems(mapped);
-              localStorage.setItem("ghostflow_vault_items", JSON.stringify(mapped));
-            }
-          }
+          // Vault is empty — show empty state, do NOT seed fake data
+          setVaultItems([]);
+          localStorage.removeItem("ghostflow_vault_items");
         }
       } catch (e) {
         console.error(e);
@@ -234,7 +163,6 @@ export default function VaultPage() {
     };
 
     fetchVaultItems();
-    fetchStorageUsage();
   }, [user]);
 
   const [search, setSearch] = useState("");
@@ -486,23 +414,12 @@ export default function VaultPage() {
             {vaultItems.length} items in your vault
           </p>
           
-          {/* Dynamic Storage Capacity Indicator */}
-          <div className="mt-2 flex flex-col gap-1 w-64 bg-white/[0.02] border border-white/5 rounded-xl px-3 py-2">
-            <div className="flex items-center justify-between text-[9px] font-bold tracking-tight uppercase text-zinc-500">
-              <span className="flex items-center gap-1">
-                <Shield className="h-3 w-3 text-cyan-400" />
-                Vault Storage Capacity
-              </span>
-              <span className="text-zinc-400 font-semibold">
-                {(usedStorageBytes / (1024 * 1024)).toFixed(1)} MB / 500.0 MB
-              </span>
-            </div>
-            <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden relative">
-              <div 
-                className="h-full bg-gradient-to-r from-cyan-500 to-violet-500 rounded-full transition-all duration-500"
-                style={{ width: `${Math.min(100, (usedStorageBytes / (500 * 1024 * 1024)) * 100)}%` }}
-              />
-            </div>
+          {/* Cloudinary Storage Badge */}
+          <div className="mt-2 inline-flex items-center gap-1.5 bg-white/[0.02] border border-white/5 rounded-xl px-3 py-1.5">
+            <Shield className="h-3 w-3 text-cyan-400" />
+            <span className="text-[10px] font-semibold text-zinc-400">Storage by</span>
+            <span className="text-[10px] font-bold text-cyan-400">Cloudinary</span>
+            <span className="text-[10px] text-zinc-600">· 25 GB free</span>
           </div>
         </div>
 
@@ -1194,25 +1111,24 @@ export default function VaultPage() {
                         }
 
                         if (vaultType !== "caption" && selectedFile) {
-                          const fileExt = selectedFile.name.split('.').pop();
-                          const filePath = `${user.id}/${Date.now()}.${fileExt}`;
+                          // Upload to Cloudinary (25 GB free, permanent CDN URLs)
+                          const formData = new FormData();
+                          formData.append("file", selectedFile);
+                          formData.append("upload_preset", "ghostal");
+                          formData.append("folder", `ghostal/${user.id}`);
 
-                          const { error: uploadError } = await supabase.storage
-                            .from("vault-media")
-                            .upload(filePath, selectedFile, {
-                              cacheControl: '3600',
-                              upsert: false
-                            });
+                          const cloudRes = await fetch(
+                            "https://api.cloudinary.com/v1_1/da8jrztp0/auto/upload",
+                            { method: "POST", body: formData }
+                          );
 
-                          if (uploadError) {
-                            throw uploadError;
+                          if (!cloudRes.ok) {
+                            const errData = await cloudRes.json().catch(() => ({}));
+                            throw new Error(errData?.error?.message || "Cloudinary upload failed");
                           }
 
-                          const { data: urlData } = supabase.storage
-                            .from("vault-media")
-                            .getPublicUrl(filePath);
-
-                          mediaUrl = urlData.publicUrl;
+                          const cloudData = await cloudRes.json();
+                          mediaUrl = cloudData.secure_url;
                         }
 
                         if (editingItemId) {
