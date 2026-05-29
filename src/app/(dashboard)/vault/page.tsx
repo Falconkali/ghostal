@@ -1210,7 +1210,6 @@ export default function VaultPage() {
                           "success"
                         );
 
-                        fetchStorageUsage();
 
                       } catch (err: any) {
                         console.error("Error in upload/update process:", err);
