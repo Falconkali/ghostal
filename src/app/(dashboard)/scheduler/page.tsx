@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Calendar,
@@ -93,126 +93,169 @@ export default function SchedulerPage() {
   };
 
   // Load vault items & scheduled posts from Supabase
+  const fetchData = useCallback(async () => {
+    if (!user) return;
+    setIsDbLoading(true);
+    try {
+      // 1. Fetch Vault Items
+      const { data: vData, error: vError } = await supabase
+        .from("vault_items")
+        .select("*")
+        .eq("user_id", user.id);
+
+      if (vError) {
+        console.error("Error fetching vault items for scheduler:", vError);
+      } else if (vData) {
+        const mappedVault: VaultItem[] = vData.map((d: any) => ({
+          id: d.id,
+          type: d.media_type as any,
+          title: d.title || "Untitled Asset",
+          caption: d.default_caption || "",
+          tags: d.tags || [],
+          mediaUrl: d.media_url || undefined,
+          thumbnailUrl: d.thumbnail_url || undefined,
+          createdAt: d.created_at,
+          usedCount: d.used_count || 0,
+          performanceScore: d.performance_score || 80,
+          isEvergreen: d.is_evergreen || false,
+        }));
+        setVaultItems(mappedVault);
+        localStorage.setItem("ghostflow_vault_items", JSON.stringify(mappedVault));
+      }
+
+      // 2. Fetch Scheduled Posts
+      const { data: sData, error: sError } = await supabase
+        .from("scheduled_posts")
+        .select("*")
+        .eq("user_id", user.id)
+        .order("scheduled_at", { ascending: true });
+
+      if (sError) {
+        console.error("Error fetching scheduled posts:", sError);
+      } else if (sData && sData.length > 0) {
+        const mappedScheduled: ScheduledPost[] = sData.map((d: any) => ({
+          id: d.id,
+          vaultItemId: d.vault_item_id || "",
+          caption: d.caption || "",
+          hashtags: d.hashtags || [],
+          firstComment: d.first_comment || undefined,
+          scheduledAt: d.scheduled_at,
+          status: d.status as any,
+          type: d.type as any,
+          thumbnailUrl: d.thumbnail_url || undefined,
+        }));
+        setScheduledPosts(mappedScheduled);
+        localStorage.setItem("ghostflow_scheduled_posts", JSON.stringify(mappedScheduled));
+      } else {
+        // Seed scheduled posts dynamically shifted to current active week so they appear on mount!
+        const mon = getTodayWeekStart();
+        const shiftedMockPosts = mockScheduledPosts.map((post, index) => {
+          const targetDate = new Date(mon);
+          // Stagger posts across Mon (0), Wed (2), Fri (4)
+          const dayOffset = (index % 3) * 2;
+          targetDate.setDate(mon.getDate() + dayOffset);
+          
+          // Stagger hours (9:00 AM, 12:00 PM, 6:00 PM)
+          const hours = [9, 12, 18];
+          targetDate.setHours(hours[index % 3], 0, 0, 0);
+
+          return {
+            user_id: user.id,
+            caption: post.caption,
+            hashtags: post.hashtags,
+            scheduled_at: targetDate.toISOString(),
+            status: post.status,
+            type: post.type,
+            thumbnail_url: post.thumbnailUrl,
+          };
+        });
+
+        const { error: seedError } = await supabase
+          .from("scheduled_posts")
+          .insert(shiftedMockPosts);
+
+        if (seedError) {
+          console.error("Error seeding mock scheduled posts:", seedError);
+          setScheduledPosts(mockScheduledPosts);
+        } else {
+          // Re-fetch to get correct assigned DB UUIDs
+          const { data: refetched } = await supabase
+            .from("scheduled_posts")
+            .select("*")
+            .eq("user_id", user.id)
+            .order("scheduled_at", { ascending: true });
+          
+          if (refetched) {
+            const mapped = refetched.map((d: any) => ({
+              id: d.id,
+              vaultItemId: d.vault_item_id || "",
+              caption: d.caption || "",
+              hashtags: d.hashtags || [],
+              firstComment: d.first_comment || undefined,
+              scheduledAt: d.scheduled_at,
+              status: d.status as any,
+              type: d.type as any,
+              thumbnailUrl: d.thumbnail_url || undefined,
+            }));
+            setScheduledPosts(mapped);
+            localStorage.setItem("ghostflow_scheduled_posts", JSON.stringify(mapped));
+          }
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsDbLoading(false);
+    }
+  }, [user]);
+
+  // Initial Load
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  // Focus and Custom Event Listeners
   useEffect(() => {
     if (!user) return;
 
-    const fetchData = async () => {
-      setIsDbLoading(true);
-      try {
-        // 1. Fetch Vault Items
-        const { data: vData, error: vError } = await supabase
-          .from("vault_items")
-          .select("*")
-          .eq("user_id", user.id);
-
-        if (vError) {
-          console.error("Error fetching vault items for scheduler:", vError);
-        } else if (vData) {
-          const mappedVault: VaultItem[] = vData.map((d: any) => ({
-            id: d.id,
-            type: d.media_type as any,
-            title: d.title || "Untitled Asset",
-            caption: d.default_caption || "",
-            tags: d.tags || [],
-            mediaUrl: d.media_url || undefined,
-            thumbnailUrl: d.thumbnail_url || undefined,
-            createdAt: d.created_at,
-            usedCount: d.used_count || 0,
-            performanceScore: d.performance_score || 80,
-            isEvergreen: d.is_evergreen || false,
-          }));
-          setVaultItems(mappedVault);
-          localStorage.setItem("ghostflow_vault_items", JSON.stringify(mappedVault));
-        }
-
-        // 2. Fetch Scheduled Posts
-        const { data: sData, error: sError } = await supabase
-          .from("scheduled_posts")
-          .select("*")
-          .eq("user_id", user.id)
-          .order("scheduled_at", { ascending: true });
-
-        if (sError) {
-          console.error("Error fetching scheduled posts:", sError);
-        } else if (sData && sData.length > 0) {
-          const mappedScheduled: ScheduledPost[] = sData.map((d: any) => ({
-            id: d.id,
-            vaultItemId: d.vault_item_id || "",
-            caption: d.caption || "",
-            hashtags: d.hashtags || [],
-            firstComment: d.first_comment || undefined,
-            scheduledAt: d.scheduled_at,
-            status: d.status as any,
-            type: d.type as any,
-            thumbnailUrl: d.thumbnail_url || undefined,
-          }));
-          setScheduledPosts(mappedScheduled);
-          localStorage.setItem("ghostflow_scheduled_posts", JSON.stringify(mappedScheduled));
-        } else {
-          // Seed scheduled posts dynamically shifted to current active week so they appear on mount!
-          const mon = getTodayWeekStart();
-          const shiftedMockPosts = mockScheduledPosts.map((post, index) => {
-            const targetDate = new Date(mon);
-            // Stagger posts across Mon (0), Wed (2), Fri (4)
-            const dayOffset = (index % 3) * 2;
-            targetDate.setDate(mon.getDate() + dayOffset);
-            
-            // Stagger hours (9:00 AM, 12:00 PM, 6:00 PM)
-            const hours = [9, 12, 18];
-            targetDate.setHours(hours[index % 3], 0, 0, 0);
-
-            return {
-              user_id: user.id,
-              caption: post.caption,
-              hashtags: post.hashtags,
-              scheduled_at: targetDate.toISOString(),
-              status: post.status,
-              type: post.type,
-              thumbnail_url: post.thumbnailUrl,
-            };
-          });
-
-          const { error: seedError } = await supabase
-            .from("scheduled_posts")
-            .insert(shiftedMockPosts);
-
-          if (seedError) {
-            console.error("Error seeding mock scheduled posts:", seedError);
-            setScheduledPosts(mockScheduledPosts);
-          } else {
-            // Re-fetch to get correct assigned DB UUIDs
-            const { data: refetched } = await supabase
-              .from("scheduled_posts")
-              .select("*")
-              .eq("user_id", user.id)
-              .order("scheduled_at", { ascending: true });
-            
-            if (refetched) {
-              const mapped = refetched.map((d: any) => ({
-                id: d.id,
-                vaultItemId: d.vault_item_id || "",
-                caption: d.caption || "",
-                hashtags: d.hashtags || [],
-                firstComment: d.first_comment || undefined,
-                scheduledAt: d.scheduled_at,
-                status: d.status as any,
-                type: d.type as any,
-                thumbnailUrl: d.thumbnail_url || undefined,
-              }));
-              setScheduledPosts(mapped);
-              localStorage.setItem("ghostflow_scheduled_posts", JSON.stringify(mapped));
-            }
-          }
-        }
-      } catch (e) {
-        console.error(e);
-      } finally {
-        setIsDbLoading(false);
-      }
+    const handleSync = () => {
+      fetchData();
     };
 
-    fetchData();
-  }, [user]);
+    window.addEventListener("automation_run", handleSync);
+    window.addEventListener("focus", handleSync);
+
+    return () => {
+      window.removeEventListener("automation_run", handleSync);
+      window.removeEventListener("focus", handleSync);
+    };
+  }, [user, fetchData]);
+
+  // Realtime Supabase Database Listener
+  useEffect(() => {
+    if (!user) return;
+
+    const channel = supabase
+      .channel(`realtime-scheduler-${user.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "scheduled_posts",
+          filter: `user_id=eq.${user.id}`,
+        },
+        (payload) => {
+          console.log("Realtime scheduler database update received:", payload);
+          fetchData();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user, fetchData]);
 
   // Load vault items from localstorage if updated elsewhere
   useEffect(() => {
@@ -386,8 +429,19 @@ export default function SchedulerPage() {
         
       if (!dateMatches) return false;
       
-      const postHour = `${postDate.getHours().toString().padStart(2, "0")}:00`;
-      return postHour === hour;
+      const postHourNum = postDate.getHours();
+      // Find the closest hour in the HOURS array so dynamic/off-grid times are grouped into grid rows gracefully
+      let closestHour = HOURS[0];
+      let minDiff = Infinity;
+      for (const h of HOURS) {
+        const hNum = parseInt(h.split(":")[0]);
+        const diff = Math.abs(hNum - postHourNum);
+        if (diff < minDiff) {
+          minDiff = diff;
+          closestHour = h;
+        }
+      }
+      return closestHour === hour;
     });
   };
 
