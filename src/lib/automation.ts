@@ -128,24 +128,30 @@ export async function checkAndPublishDuePosts(userId: string, client = supabase)
 
         const creationId = containerData.id;
 
-        // 2. Poll container if it is a Reel/Video
-        if (mediaType === "reel" || mediaType === "video") {
-          let isFinished = false;
-          for (let attempt = 0; attempt < 5; attempt++) {
-            // Wait 2 seconds
-            await new Promise((resolve) => setTimeout(resolve, 2000));
-            const statusRes = await fetch(
-              `https://graph.instagram.com/v21.0/${creationId}?fields=status_code&access_token=${profile.instagram_token}`
-            );
-            const statusData = await statusRes.json();
-            if (statusData.status_code === "FINISHED") {
-              isFinished = true;
-              break;
-            }
+        // 2. Poll container status for ALL media types (images AND videos/reels).
+        // Instagram needs time to process the media before it can be published.
+        // Skipping this causes error 9007: "Media ID is not available".
+        let containerReady = false;
+        for (let attempt = 0; attempt < 10; attempt++) {
+          // Wait 3 seconds between each poll
+          await new Promise((resolve) => setTimeout(resolve, 3000));
+          const statusRes = await fetch(
+            `https://graph.instagram.com/v21.0/${creationId}?fields=status_code&access_token=${profile.instagram_token}`
+          );
+          const statusData = await statusRes.json();
+          console.log(`Container status attempt ${attempt + 1} for post ${post.id}:`, statusData.status_code);
+          if (statusData.status_code === "FINISHED") {
+            containerReady = true;
+            break;
           }
-          if (!isFinished) {
-            throw new Error("Video container processing timed out on Meta servers");
+          if (statusData.status_code === "ERROR") {
+            throw new Error("Instagram container processing failed (ERROR status from Meta)");
           }
+          // status_code === "IN_PROGRESS" → keep polling
+        }
+
+        if (!containerReady) {
+          throw new Error("Instagram container timed out — image may be too large or URL unreachable by Meta");
         }
 
         // 3. Publish the container
