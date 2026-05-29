@@ -23,7 +23,8 @@ export async function GET(request: NextRequest) {
     const { data: profiles, error: profileError } = await adminClient
       .from("profiles")
       .select("id, ghost_mode_config, created_at")
-      .eq("instagram_connected", true);
+      // Match both explicitly-true AND NULL (unset) to avoid skipping new users
+      .or("instagram_connected.eq.true,instagram_connected.is.null");
 
     if (profileError) {
       console.error("Cron Error: Failed to fetch profiles:", profileError);
@@ -93,7 +94,11 @@ export async function GET(request: NextRequest) {
           userId,
           config.inactivityThresholdDays || 3,
           config.preserveHashtags !== false,
-          adminClient
+          adminClient,
+          {
+            aiFallbackBehavior: config.aiFallbackBehavior,
+            maxSurvivalPostsPerWeek: config.maxSurvivalPostsPerWeek,
+          }
         );
       }
 
