@@ -124,26 +124,145 @@ function verifySignature(payload: string, signatureHeader: string, secret: strin
   }
 }
 
+// ── Supabase Admin Client (uses service role key for server-side writes) ──
+function getSupabaseAdmin() {
+  const { createClient } = require("@supabase/supabase-js");
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!url || !serviceKey) {
+    console.warn(
+      "Webhook DB writes skipped: NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY not configured."
+    );
+    return null;
+  }
+  return createClient(url, serviceKey);
+}
+
 /**
- * Handle incoming comments on your Instagram media
+ * Handle incoming comments on your Instagram media.
+ * Writes a webhook_events record so comments are auditable and can be
+ * correlated with post performance in the analytics dashboard.
  */
 async function handleCommentEvent(value: any) {
   console.log("Processing Comment Event:", JSON.stringify(value, null, 2));
-  // FUTURE: Connect to AI logic to remix captions or trigger safety notifications
+
+  const supabase = getSupabaseAdmin();
+  if (!supabase) return;
+
+  try {
+    const mediaId: string = value?.media?.id ?? value?.media_id ?? null;
+    const commentId: string = value?.id ?? null;
+    const commentText: string = value?.text ?? "";
+    const commenterId: string = value?.from?.id ?? null;
+
+    // 1. Store the raw event for auditability
+    await supabase.from("webhook_events").insert({
+      event_type: "comment",
+      instagram_media_id: mediaId,
+      instagram_object_id: commentId,
+      payload: value,
+      processed_at: new Date().toISOString(),
+    });
+
+    // 2. If the media ID is associated with a scheduled post, update its comment count
+    if (mediaId) {
+      await supabase.rpc("increment_post_comment_count", {
+        p_instagram_media_id: mediaId,
+      });
+    }
+
+    // 3. Log engagement metric for analytics
+    if (mediaId && commentText) {
+      await supabase.from("engagement_events").insert({
+        event_type: "comment",
+        instagram_media_id: mediaId,
+        content_preview: commentText.substring(0, 120),
+        actor_id: commenterId,
+        occurred_at: new Date().toISOString(),
+      });
+    }
+
+    console.log(
+      `Comment event stored: mediaId=${mediaId}, commentId=${commentId}`
+    );
+  } catch (err: any) {
+    console.error("Error persisting comment event:", err.message);
+  }
 }
 
 /**
- * Handle mentions of your profile in comment text or captions
+ * Handle mentions of your profile in comment text or captions.
+ * Records the mention so creators can track brand reach and engagement trends.
  */
 async function handleMentionEvent(value: any) {
   console.log("Processing Mention Event:", JSON.stringify(value, null, 2));
-  // FUTURE: Log engagement trends or trigger auto-replies
+
+  const supabase = getSupabaseAdmin();
+  if (!supabase) return;
+
+  try {
+    const mediaId: string = value?.media_id ?? null;
+    const commentId: string = value?.comment_id ?? null;
+
+    // Store the raw event
+    await supabase.from("webhook_events").insert({
+      event_type: "mention",
+      instagram_media_id: mediaId,
+      instagram_object_id: commentId,
+      payload: value,
+      processed_at: new Date().toISOString(),
+    });
+
+    // Log as an engagement event
+    await supabase.from("engagement_events").insert({
+      event_type: "mention",
+      instagram_media_id: mediaId,
+      occurred_at: new Date().toISOString(),
+    });
+
+    console.log(`Mention event stored: mediaId=${mediaId}, commentId=${commentId}`);
+  } catch (err: any) {
+    console.error("Error persisting mention event:", err.message);
+  }
 }
 
 /**
- * Handle Direct Messages (DMs) sent to your Instagram account
+ * Handle Direct Messages (DMs) sent to your Instagram account.
+ * Stores the message so future AI chatbot integrations can replay the queue.
  */
 async function handleDMEvent(value: any) {
   console.log("Processing DM Event:", JSON.stringify(value, null, 2));
-  // FUTURE: Wire up AI chatbot messaging logic here
+
+  const supabase = getSupabaseAdmin();
+  if (!supabase) return;
+
+  try {
+    const senderId: string = value?.sender?.id ?? null;
+    const messageText: string = value?.message?.text ?? null;
+    const messageId: string = value?.message?.mid ?? null;
+
+    // Store the raw event for auditability
+    await supabase.from("webhook_events").insert({
+      event_type: "dm",
+      instagram_object_id: messageId,
+      payload: value,
+      processed_at: new Date().toISOString(),
+    });
+
+    // Store in a dedicated DM inbox table (for future AI chatbot processing)
+    if (senderId && messageText) {
+      await supabase.from("dm_inbox").insert({
+        sender_id: senderId,
+        message_id: messageId,
+        message_text: messageText,
+        received_at: new Date().toISOString(),
+        processed: false,
+      });
+    }
+
+    console.log(`DM event stored: senderId=${senderId}, messageId=${messageId}`);
+  } catch (err: any) {
+    console.error("Error persisting DM event:", err.message);
+  }
 }
