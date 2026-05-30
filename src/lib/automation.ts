@@ -132,10 +132,11 @@ export async function checkAndPublishDuePosts(userId: string, client = supabase,
         // Instagram needs time to process the media before it can be published.
         // Skipping this causes error 9007: "Media ID is not available".
         let containerReady = false;
-        for (let attempt = 0; attempt < 10; attempt++) {
-          onProgress?.(`Waiting for Instagram to process media (${attempt + 1}/10)...`);
-          // Wait 3 seconds between each poll
-          await new Promise((resolve) => setTimeout(resolve, 3000));
+        const maxAttempts = 12;
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+          onProgress?.(`Waiting for Instagram to process media (${attempt + 1}/${maxAttempts})...`);
+          // Wait 2 seconds between each poll
+          await new Promise((resolve) => setTimeout(resolve, 2000));
           const statusRes = await fetch(
             `https://graph.instagram.com/v21.0/${creationId}?fields=status_code&access_token=${profile.instagram_token}`
           );
