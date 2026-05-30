@@ -35,6 +35,7 @@ export default function SettingsPage() {
 
   const [saving, setSaving] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  const [upgrading, setUpgrading] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isLoadingProfile, setIsLoadingProfile] = useState(true);
@@ -1250,8 +1251,41 @@ export default function SettingsPage() {
                     </div>
                     {planInfo.name !== "Survival AI" && (
                       <div className="flex flex-col gap-2 items-start sm:items-end">
-                        <button className="rounded-lg bg-gradient-to-r from-violet-600 to-cyan-500 px-4 py-2 text-xs font-semibold text-white hover:opacity-90 transition-all cursor-pointer shadow-lg shadow-violet-500/20">
-                          {planInfo.name === "Starter" ? "Upgrade to Creator Pro" : "Upgrade to Survival AI"}
+                        <button
+                          id="billing-upgrade-btn"
+                          disabled={upgrading}
+                          onClick={async () => {
+                            setUpgrading(true);
+                            setErrorMessage(null);
+                            try {
+                              if (!user) throw new Error("User session not found.");
+                              const targetPlan = planInfo.name === "Starter" ? "creator_pro" : "survival_ai";
+                              const { error } = await supabase
+                                .from("profiles")
+                                .update({ plan: targetPlan })
+                                .eq("id", user.id);
+                              if (error) throw error;
+                              setPlanInfo({
+                                name: targetPlan === "creator_pro" ? "Creator Pro" : "Survival AI",
+                                price: targetPlan === "creator_pro" ? "$29/mo" : "$59/mo",
+                                renewsAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+                              });
+                              setSuccessMessage(`Successfully upgraded to ${targetPlan === "creator_pro" ? "Creator Pro" : "Survival AI"} (Sandbox Mode)!`);
+                              setTimeout(() => setSuccessMessage(null), 4000);
+                            } catch (err: any) {
+                              setErrorMessage(err.message || "Could not upgrade plan. Please try again.");
+                              setTimeout(() => setErrorMessage(null), 6000);
+                            } finally {
+                              setUpgrading(false);
+                            }
+                          }}
+                          className="flex items-center gap-2 rounded-lg bg-gradient-to-r from-violet-600 to-cyan-500 px-4 py-2 text-xs font-semibold text-white hover:opacity-90 transition-all cursor-pointer shadow-lg shadow-violet-500/20 disabled:opacity-60"
+                        >
+                          {upgrading ? (
+                            <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Redirecting...</>
+                          ) : (
+                            planInfo.name === "Starter" ? "Upgrade to Creator Pro" : "Upgrade to Survival AI"
+                          )}
                         </button>
                         <p className="text-[10px] text-zinc-500">No commitment · cancel anytime</p>
                       </div>
