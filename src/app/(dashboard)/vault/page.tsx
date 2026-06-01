@@ -26,7 +26,7 @@ import {
   ChevronRight,
   Shield,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, formatTitle } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
 import IntegrationRequired from "@/components/dashboard/integration-required";
 import type { VaultTag, VaultItem } from "@/types";
@@ -594,7 +594,7 @@ export default function VaultPage() {
                 {/* Content info card */}
                 <div className="p-3 bg-[#0B0A12]/40 border-t border-white/[0.04]">
                   <div className="flex items-center justify-between gap-2">
-                    <h3 className="text-sm font-semibold text-white truncate flex-1">{vault.title}</h3>
+                    <h3 className="text-sm font-semibold text-white truncate flex-1">{formatTitle(vault.title)}</h3>
                     <div className="flex items-center gap-1 shrink-0 opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity duration-200" onClick={(e) => e.stopPropagation()}>
                       <button
                         onClick={() => handleEditClick(vault)}
