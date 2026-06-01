@@ -210,6 +210,7 @@ export default function Sidebar({
     <>
       {/* Desktop Sidebar */}
       <motion.aside
+        initial={{ width: collapsed ? 64 : 224 }}
         animate={{ width: collapsed ? 64 : 224 }}
         transition={{ duration: 0.3, ease: "easeInOut" as const }}
         className="hidden md:flex fixed left-0 top-0 z-40 h-screen flex-col glass-strong border-r border-white/5"
