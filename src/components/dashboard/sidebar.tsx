@@ -208,15 +208,17 @@ export default function Sidebar({
 
   return (
     <>
-      {/* Desktop Sidebar */}
-      <motion.aside
-        initial={{ width: collapsed ? 64 : 224 }}
-        animate={{ width: collapsed ? 64 : 224 }}
-        transition={{ duration: 0.3, ease: "easeInOut" as const }}
-        className="hidden md:flex fixed left-0 top-0 z-40 h-screen flex-col glass-strong border-r border-white/5"
+      {/* Desktop Sidebar — width is controlled by CSS classes (not framer-motion)
+          so it is correct from the very first render (SSR + hydration). */}
+      <aside
+        className={cn(
+          "hidden md:flex fixed left-0 top-0 z-40 h-screen flex-col glass-strong border-r border-white/5",
+          "overflow-hidden transition-[width] duration-300 ease-in-out",
+          collapsed ? "w-16" : "w-56"
+        )}
       >
         {renderSidebarContent(false)}
-      </motion.aside>
+      </aside>
 
       {/* Mobile Overlay */}
       <AnimatePresence>
