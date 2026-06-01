@@ -54,7 +54,7 @@ export default function DashboardLayout({
       <main
         className={cn(
           "pt-16 min-h-screen transition-all duration-300 ml-0",
-          sidebarCollapsed ? "md:ml-16" : "md:ml-[200px]"
+          sidebarCollapsed ? "md:ml-16" : "md:ml-56"
         )}
       >
         <div className="p-4 md:p-5 lg:p-6">{children}</div>
