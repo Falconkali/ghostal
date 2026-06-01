@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useRouter, usePathname } from "next/navigation";
 import Sidebar from "@/components/dashboard/sidebar";
 import Topbar from "@/components/dashboard/topbar";
 import AutomationRunner from "@/components/dashboard/automation-runner";
@@ -15,8 +14,6 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   const { user, isLoading } = useAuth();
-  const router = useRouter();
-  const pathname = usePathname();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -24,11 +21,9 @@ export default function DashboardLayout({
     if (!isLoading) {
       if (!user) {
         window.location.href = "/login";
-      } else if (pathname === "/onboarding") {
-        router.push("/dashboard");
       }
     }
-  }, [user, isLoading, pathname, router]);
+  }, [user, isLoading]);
 
   if (isLoading) {
     return (
@@ -57,15 +52,13 @@ export default function DashboardLayout({
         sidebarCollapsed={sidebarCollapsed}
       />
       <main
-  className={cn(
-    "pt-12 min-h-screen transition-all duration-300 ml-0",
-    sidebarCollapsed ? "md:ml-16" : "md:ml-56"
-  )}
->
-  <div className="px-2 py-2 md:px-3 md:py-3">
-    {children}
-  </div>
-</main>
+        className={cn(
+          "pt-16 min-h-screen transition-[margin-left] duration-300 ease-in-out",
+          sidebarCollapsed ? "md:ml-16" : "md:ml-56"
+        )}
+      >
+        <div className="p-4 md:p-5 lg:p-6">{children}</div>
+      </main>
     </div>
   );
 }
