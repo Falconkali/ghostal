@@ -18,7 +18,7 @@ import {
   Shield,
   Loader2,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, formatTitle } from "@/lib/utils";
 import { mockSurvivalLogs } from "@/lib/mock-data";
 import { useAuth } from "@/hooks/use-auth";
 import IntegrationRequired from "@/components/dashboard/integration-required";
@@ -179,7 +179,7 @@ export default function AISurvivalPage() {
           generated.push({
             id: `sug_res_${item.id}`,
             type: "resurrect",
-            title: `Resurrect: ${item.title}`,
+            title: `Resurrect: ${formatTitle(item.title)}`,
             description: `This evergreen asset has a premium ${item.performanceScore}% score. It has been shared ${item.usedCount} times. Ready for immediate republishing.`,
             confidence: 94,
             vaultItemId: item.id,
@@ -195,7 +195,7 @@ export default function AISurvivalPage() {
           generated.push({
             id: `sug_rem_${item.id}`,
             type: "remix",
-            title: `Caption Remix: ${item.title}`,
+            title: `Caption Remix: ${formatTitle(item.title)}`,
             description: `AI synthesized a fresh caption variation for this ${item.type} to re-engage active followers with new hooks.`,
             confidence: 88,
             vaultItemId: item.id,
@@ -211,7 +211,7 @@ export default function AISurvivalPage() {
           generated.push({
             id: `sug_rep_${item.id}`,
             type: "repost",
-            title: `Repost: ${item.title}`,
+            title: `Repost: ${formatTitle(item.title)}`,
             description: `Repost unmodified evergreen content. Your follower count has expanded, so new viewers haven't seen this.`,
             confidence: 91,
             vaultItemId: item.id,
@@ -334,12 +334,12 @@ export default function AISurvivalPage() {
         .insert({
           user_id: user.id,
           action: suggestion.type === "resurrect" ? "Content Resurrected" : "AI Suggestions Applied",
-          description: `Applied suggestion: resurrected "${vaultItem.title}" and queued it for ${scheduleTime.toLocaleDateString()}.`,
+          description: `Applied suggestion: resurrected "${formatTitle(vaultItem.title)}" and queued it for ${scheduleTime.toLocaleDateString()}.`,
           status: "success",
           post_id: newPost.id,
         });
 
-      setSuccessMessage(`Successfully queued "${vaultItem.title}" for posting!`);
+      setSuccessMessage(`Successfully queued "${formatTitle(vaultItem.title)}" for posting!`);
       setTimeout(() => setSuccessMessage(null), 4000);
       
       // Reload page data
