@@ -1,5 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { encrypt } from "@/lib/crypto";
+
 
 export const runtime = "nodejs";
 
@@ -124,7 +126,7 @@ export async function GET(request: NextRequest) {
       .update({
         instagram_connected: true,
         instagram_handle: instagramHandle,
-        instagram_token: longLivedToken,
+        instagram_token: encrypt(longLivedToken),
         instagram_id: realInstagramId,
       })
       .eq("id", user.id);
