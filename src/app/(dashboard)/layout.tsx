@@ -1,4 +1,5 @@
 "use client";
+
 import { useState, useEffect } from "react";
 import Sidebar from "@/components/dashboard/sidebar";
 import Topbar from "@/components/dashboard/topbar";
@@ -6,6 +7,7 @@ import AutomationRunner from "@/components/dashboard/automation-runner";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
 import { Loader2 } from "lucide-react";
+
 export default function DashboardLayout({
   children,
 }: {
@@ -14,6 +16,7 @@ export default function DashboardLayout({
   const { user, isLoading } = useAuth();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
   useEffect(() => {
     if (!isLoading) {
       if (!user) {
@@ -21,6 +24,7 @@ export default function DashboardLayout({
       }
     }
   }, [user, isLoading]);
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-3">
@@ -29,9 +33,11 @@ export default function DashboardLayout({
       </div>
     );
   }
+
   if (!user) {
     return null;
   }
+
   return (
     <div className="min-h-screen bg-background">
       <AutomationRunner />
@@ -47,8 +53,8 @@ export default function DashboardLayout({
       />
       <main
         className={cn(
-          "pt-16 min-h-screen transition-all duration-300 ml-0",
-          sidebarCollapsed ? "md:ml-[64px]" : "md:ml-[224px]"
+          "pt-16 min-h-screen transition-[margin-left] duration-300 ease-in-out",
+          sidebarCollapsed ? "md:ml-16" : "md:ml-56"
         )}
       >
         <div className="p-4 md:p-5 lg:p-6">{children}</div>
@@ -56,3 +62,4 @@ export default function DashboardLayout({
     </div>
   );
 }
+
