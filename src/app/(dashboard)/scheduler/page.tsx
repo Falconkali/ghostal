@@ -32,6 +32,7 @@ import { useAuth } from "@/hooks/use-auth";
 import IntegrationRequired from "@/components/dashboard/integration-required";
 import type { ScheduledPost, VaultItem, VaultTag } from "@/types";
 import { supabase } from "@/lib/supabase";
+import { decrypt } from "@/lib/crypto";
 
 const container = {
   hidden: { opacity: 0 },
@@ -520,10 +521,12 @@ export default function SchedulerPage() {
       let published = false;
       let realErrorMessage = "";
 
-      if (profile?.instagram_token && profile?.instagram_id && mediaUrl) {
+      const decryptedToken = profile?.instagram_token ? decrypt(profile.instagram_token) : "";
+
+      if (decryptedToken && profile?.instagram_id && mediaUrl) {
         const containerParams: Record<string, string> = {
           caption: post.caption,
-          access_token: profile.instagram_token,
+          access_token: decryptedToken,
         };
         if (post.type === "reel") {
           containerParams.media_type = "REELS";
@@ -569,7 +572,7 @@ export default function SchedulerPage() {
           for (let attempt = 0; attempt < 10; attempt++) {
             await new Promise((resolve) => setTimeout(resolve, 3000)); // wait 3s
             const statusRes = await fetch(
-              `https://graph.instagram.com/v21.0/${creationId}?fields=status_code&access_token=${profile.instagram_token}`
+              `https://graph.instagram.com/v21.0/${creationId}?fields=status_code&access_token=${decryptedToken}`
             );
             const statusData = await statusRes.json();
             console.log(`Container status attempt ${attempt + 1}:`, statusData.status_code);
@@ -596,7 +599,7 @@ export default function SchedulerPage() {
                 headers: { "Content-Type": "application/x-www-form-urlencoded" },
                 body: new URLSearchParams({
                   creation_id: creationId,
-                  access_token: profile.instagram_token,
+                  access_token: decryptedToken,
                 }),
               }
             );
