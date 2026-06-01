@@ -58,11 +58,11 @@ export default function DashboardLayout({
       />
       <main
         className={cn(
-          "pt-16 min-h-screen transition-all duration-300 ml-0",
-          sidebarCollapsed ? "md:ml-16" : "md:ml-60"
+          ""pt-14 min-h-screen transition-all duration-300 ml-0",
+sidebarCollapsed ? "md:ml-16" : "md:ml-56""
         )}
       >
-        <div className="p-4 md:p-6 lg:p-8">{children}</div>
+        <div className="px-4 py-2 md:px-5 md:py-3">{children}</div>
       </main>
     </div>
   );
