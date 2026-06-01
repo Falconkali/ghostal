@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
+import { decrypt } from "@/lib/crypto";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Activity,
@@ -307,9 +308,11 @@ export default function DashboardPage() {
           .eq("id", user.id)
           .single();
 
-        if (profile?.instagram_token) {
+        const decryptedToken = profile?.instagram_token ? decrypt(profile.instagram_token) : "";
+
+        if (decryptedToken) {
           const res = await fetch(
-            `https://graph.instagram.com/v21.0/me?fields=followers_count,follows_count,media_count&access_token=${profile.instagram_token}`
+            `https://graph.instagram.com/v21.0/me?fields=followers_count,follows_count,media_count&access_token=${decryptedToken}`
           );
           const data = await res.json();
           if (data && !data.error) {
