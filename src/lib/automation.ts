@@ -1,4 +1,6 @@
 import { supabase } from "@/lib/supabase";
+import { decrypt } from "./crypto";
+
 
 const REMIX_TEMPLATES = [
   {
@@ -96,7 +98,9 @@ export async function checkAndPublishDuePosts(userId: string, client = supabase,
       }
     }
 
-    if (profile?.instagram_token && profile?.instagram_id && mediaUrl) {
+    const decryptedToken = profile?.instagram_token ? decrypt(profile.instagram_token) : "";
+
+    if (decryptedToken && profile?.instagram_id && mediaUrl) {
       try {
         console.log(`Attempting real Instagram publish for post ${post.id}...`);
         
@@ -104,7 +108,7 @@ export async function checkAndPublishDuePosts(userId: string, client = supabase,
         const containerUrl = `https://graph.instagram.com/v21.0/${profile.instagram_id}/media`;
         const containerParams: Record<string, string> = {
           caption: post.caption,
-          access_token: profile.instagram_token,
+          access_token: decryptedToken,
         };
 
         if (mediaType === "reel" || mediaType === "video") {
@@ -138,7 +142,7 @@ export async function checkAndPublishDuePosts(userId: string, client = supabase,
           // Wait 2 seconds between each poll
           await new Promise((resolve) => setTimeout(resolve, 2000));
           const statusRes = await fetch(
-            `https://graph.instagram.com/v21.0/${creationId}?fields=status_code&access_token=${profile.instagram_token}`
+            `https://graph.instagram.com/v21.0/${creationId}?fields=status_code&access_token=${decryptedToken}`
           );
           const statusData = await statusRes.json();
           console.log(`Container status attempt ${attempt + 1} for post ${post.id}:`, statusData.status_code);
@@ -164,7 +168,7 @@ export async function checkAndPublishDuePosts(userId: string, client = supabase,
           headers: { "Content-Type": "application/x-www-form-urlencoded" },
           body: new URLSearchParams({
             creation_id: creationId,
-            access_token: profile.instagram_token,
+            access_token: decryptedToken,
           }),
         });
 
@@ -175,7 +179,7 @@ export async function checkAndPublishDuePosts(userId: string, client = supabase,
         }
 
         success = true;
-        logDescription = `Successfully published scheduled ${post.type} content to Instagram: "${post.caption.slice(0, 35)}..."`;
+        logDescription = `Successfully published scheduled ${post.type} content to Instagram: "${(post.caption || "").slice(0, 35)}..."`;
       } catch (err: any) {
         console.error(`Meta API publish failed for post ${post.id}:`, err.message);
         
@@ -191,7 +195,7 @@ export async function checkAndPublishDuePosts(userId: string, client = supabase,
         if (isSandboxOnlyError) {
           // Graceful fallback ONLY for development-mode app review restriction
           success = true;
-          logDescription = `Simulated Publish (Meta App Review required. Content: "${post.caption.slice(0, 35)}...")`;
+          logDescription = `Simulated Publish (Meta App Review required. Content: "${(post.caption || "").slice(0, 35)}...")`;
           console.log("Simulating publication success: app is pending Meta App Review.");
         } else {
           // Real error - log it fully so we can debug
@@ -202,9 +206,10 @@ export async function checkAndPublishDuePosts(userId: string, client = supabase,
         }
       }
     } else {
-      // Missing token or media URL - default to simulation/fallback
-      success = true;
-      logDescription = `Successfully published scheduled ${post.type} content (Simulation mode): "${post.caption.slice(0, 35)}..."`;
+      // Missing token or media URL - register as failure
+      success = false;
+      statusToSet = "failed";
+      logDescription = `Publish failed: Instagram credentials (token/ID) or media URL missing.`;
     }
 
     // Update scheduled_posts table
@@ -356,14 +361,13 @@ export async function runAISurvivalRefill(
     .order("scheduled_at", { ascending: false })
     .limit(1);
 
-  let newScheduleDate = new Date();
+  let newScheduleDate: Date;
   if (latestPost && latestPost.length > 0) {
-    newScheduleDate = new Date(latestPost[0].scheduled_at);
-    // Add 24 hours to the last scheduled post
-    newScheduleDate.setHours(newScheduleDate.getHours() + 24);
+    // Add 24 hours to the last scheduled post (using timezone-safe milliseconds)
+    newScheduleDate = new Date(new Date(latestPost[0].scheduled_at).getTime() + 24 * 60 * 60 * 1000);
   } else {
     // If no posts are scheduled, schedule it 12 hours from now
-    newScheduleDate.setHours(newScheduleDate.getHours() + 12);
+    newScheduleDate = new Date(Date.now() + 12 * 60 * 60 * 1000);
   }
 
   // 4. Generate caption based on aiFallbackBehavior setting:
