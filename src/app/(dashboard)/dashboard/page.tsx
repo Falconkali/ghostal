@@ -27,7 +27,7 @@ import {
   Ghost,
   Loader2,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, formatTitle } from "@/lib/utils";
 import Link from "next/link";
 import { useAuth } from "@/hooks/use-auth";
 import IntegrationRequired from "@/components/dashboard/integration-required";
@@ -372,7 +372,7 @@ export default function DashboardPage() {
     generated.push({
       id: `sug_res_${top.id}`,
       type: "resurrect",
-      title: `Resurrect: ${top.title}`,
+      title: `Resurrect: ${formatTitle(top.title)}`,
       description: `This asset has a ${top.performanceScore}% performance score and has been used ${top.usedCount} time${top.usedCount !== 1 ? "s" : ""}. Ready for revival.`,
       confidence: 94,
       vaultItemId: top.id,
@@ -389,7 +389,7 @@ export default function DashboardPage() {
       generated.push({
         id: `sug_rem_${newest.id}`,
         type: "remix",
-        title: `Caption Remix: ${newest.title}`,
+        title: `Caption Remix: ${formatTitle(newest.title)}`,
         description: `AI has generated a fresh caption variation to re-engage your followers with a new hook and CTA.`,
         confidence: 87,
         vaultItemId: newest.id,
@@ -404,7 +404,7 @@ export default function DashboardPage() {
       generated.push({
         id: `sug_rep_${evergreen.id}`,
         type: "repost",
-        title: `Repost: ${evergreen.title}`,
+        title: `Repost: ${formatTitle(evergreen.title)}`,
         description: `Your follower base has grown. New audience members haven't seen this evergreen asset — republish it unmodified.`,
         confidence: 91,
         vaultItemId: evergreen.id,
@@ -500,7 +500,16 @@ export default function DashboardPage() {
                   {stats.momentum}
                 </p>
               )}
-              <p className="mt-0.5 text-xs text-emerald-400 flex items-center gap-1">
+              <p
+                className={cn(
+                  "mt-0.5 text-xs flex items-center gap-1",
+                  stats.momentum >= 70
+                    ? "text-emerald-400"
+                    : stats.momentum >= 40
+                    ? "text-amber-400"
+                    : "text-red-400"
+                )}
+              >
                 <TrendingUp className="h-3 w-3" />
                 {stats.momentum >= 70
                   ? "Strong consistency"
