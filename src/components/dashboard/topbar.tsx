@@ -1,5 +1,4 @@
 "use client";
-
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Search, Bell, Menu, User, CreditCard, LogOut, ChevronDown } from "lucide-react";
@@ -7,12 +6,10 @@ import { cn } from "@/lib/utils";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/hooks/use-auth";
 import Link from "next/link";
-
 interface TopbarProps {
   onMobileMenuToggle: () => void;
   sidebarCollapsed: boolean;
 }
-
 export default function Topbar({ onMobileMenuToggle, sidebarCollapsed }: TopbarProps) {
   const { user, logout } = useAuth();
   const [searchFocused, setSearchFocused] = useState(false);
@@ -20,10 +17,8 @@ export default function Topbar({ onMobileMenuToggle, sidebarCollapsed }: TopbarP
   const [profileOpen, setProfileOpen] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
   const profileRef = useRef<HTMLDivElement>(null);
-
   const [logs, setLogs] = useState<any[]>([]);
   const [lastChecked, setLastChecked] = useState<number>(0);
-
   useEffect(() => {
     if (typeof window !== "undefined") {
       const stored = localStorage.getItem("ghostflow_notifications_checked");
@@ -32,7 +27,6 @@ export default function Topbar({ onMobileMenuToggle, sidebarCollapsed }: TopbarP
       }
     }
   }, []);
-
   const fetchLogs = async () => {
     if (!user) return;
     try {
@@ -49,16 +43,13 @@ export default function Topbar({ onMobileMenuToggle, sidebarCollapsed }: TopbarP
       console.error("Error loading notifications:", err);
     }
   };
-
   useEffect(() => {
     fetchLogs();
-
     // Listen to automation run to update notifications dynamically
     const handleAutomationRun = () => fetchLogs();
     window.addEventListener("automation_run", handleAutomationRun);
     return () => window.removeEventListener("automation_run", handleAutomationRun);
   }, [user?.id]);
-
   const handleNotifClick = () => {
     setNotifOpen(!notifOpen);
     setProfileOpen(false);
@@ -68,11 +59,9 @@ export default function Topbar({ onMobileMenuToggle, sidebarCollapsed }: TopbarP
       localStorage.setItem("ghostflow_notifications_checked", now.toString());
     }
   };
-
   const unreadCount = logs.filter(
     (log) => new Date(log.timestamp).getTime() > lastChecked
   ).length;
-
   useEffect(() => {
     function handleClick(e: MouseEvent) {
       if (notifRef.current && !notifRef.current.contains(e.target as Node)) {
@@ -85,19 +74,17 @@ export default function Topbar({ onMobileMenuToggle, sidebarCollapsed }: TopbarP
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
   }, []);
-
   const planLabel =
     user?.plan === "creator_pro"
       ? "Creator Pro"
       : user?.plan === "survival_ai"
       ? "Survival AI"
       : "Starter";
-
   return (
     <header
       className={cn(
         "fixed top-0 right-0 z-30 flex h-16 items-center justify-between border-b border-white/5 px-4 md:px-5 glass transition-all duration-300 left-0",
-        sidebarCollapsed ? "md:left-16" : "md:left-56"
+        sidebarCollapsed ? "md:left-[64px]" : "md:left-[224px]"
       )}
     >
       {/* Mobile menu toggle */}
@@ -107,7 +94,6 @@ export default function Topbar({ onMobileMenuToggle, sidebarCollapsed }: TopbarP
       >
         <Menu className="h-5 w-5" />
       </button>
-
       {/* Search */}
       <div className="relative flex-1 max-w-md">
         <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
@@ -124,7 +110,6 @@ export default function Topbar({ onMobileMenuToggle, sidebarCollapsed }: TopbarP
           )}
         />
       </div>
-
       <div className="flex items-center gap-2">
         {/* Notifications */}
         <div ref={notifRef} className="relative">
@@ -139,7 +124,6 @@ export default function Topbar({ onMobileMenuToggle, sidebarCollapsed }: TopbarP
               </span>
             )}
           </button>
-
           <AnimatePresence>
             {notifOpen && (
               <motion.div
@@ -199,7 +183,6 @@ export default function Topbar({ onMobileMenuToggle, sidebarCollapsed }: TopbarP
             )}
           </AnimatePresence>
         </div>
-
         {/* Profile */}
         <div ref={profileRef} className="relative">
           <button
@@ -226,7 +209,6 @@ export default function Topbar({ onMobileMenuToggle, sidebarCollapsed }: TopbarP
             </div>
             <ChevronDown className="hidden sm:block h-4 w-4 text-zinc-500" />
           </button>
-
           <AnimatePresence>
             {profileOpen && (
               <motion.div
