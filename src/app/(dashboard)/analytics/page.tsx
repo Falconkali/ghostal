@@ -38,6 +38,7 @@ import {
 import { useAuth } from "@/hooks/use-auth";
 import IntegrationRequired from "@/components/dashboard/integration-required";
 import { supabase } from "@/lib/supabase";
+import { decrypt } from "@/lib/crypto";
 import type { ScheduledPost, SurvivalLog } from "@/types";
 
 interface ChartDataPoint {
@@ -150,11 +151,13 @@ export default function AnalyticsPage() {
       let realMediaCount = 0;
       let realHandle = profileRow?.instagram_handle || "";
 
-      if (profileRow?.instagram_token) {
+      const decryptedToken = profileRow?.instagram_token ? decrypt(profileRow.instagram_token) : "";
+
+      if (decryptedToken) {
         try {
           // Fetch real account stats (followers_count, media_count)
           const accountRes = await fetch(
-            `https://graph.instagram.com/v21.0/me?fields=followers_count,media_count,username&access_token=${profileRow.instagram_token}`
+            `https://graph.instagram.com/v21.0/me?fields=followers_count,media_count,username&access_token=${decryptedToken}`
           );
           const accountData = await accountRes.json();
           if (!accountData.error) {
@@ -166,7 +169,7 @@ export default function AnalyticsPage() {
 
           // Fetch recent media with likes & comments (available with instagram_business_basic)
           const mediaRes = await fetch(
-            `https://graph.instagram.com/v21.0/me/media?fields=id,timestamp,like_count,comments_count,media_type&limit=50&access_token=${profileRow.instagram_token}`
+            `https://graph.instagram.com/v21.0/me/media?fields=id,timestamp,like_count,comments_count,media_type&limit=50&access_token=${decryptedToken}`
           );
           const mediaData = await mediaRes.json();
           if (!mediaData.error && mediaData.data) {
@@ -177,6 +180,8 @@ export default function AnalyticsPage() {
           console.warn("Instagram API error in analytics:", igErr);
         }
       }
+
+
 
       // ─────────────────────────────────────────────────────────────
       // 5. Queue / Survival metrics (from DB)
