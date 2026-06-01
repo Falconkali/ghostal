@@ -210,7 +210,7 @@ export default function Sidebar({
     <>
       {/* Desktop Sidebar */}
       <motion.aside
-        animate={{ width: collapsed ? 64 : 200 }}
+        animate={{ width: collapsed ? 64 : 224 }}
         transition={{ duration: 0.3, ease: "easeInOut" as const }}
         className="hidden md:flex fixed left-0 top-0 z-40 h-screen flex-col glass-strong border-r border-white/5"
       >
@@ -230,11 +230,11 @@ export default function Sidebar({
               onClick={onMobileClose}
             />
             <motion.aside
-              initial={{ x: -240 }}
+              initial={{ x: -224 }}
               animate={{ x: 0 }}
-              exit={{ x: -240 }}
+              exit={{ x: -224 }}
               transition={{ duration: 0.3, ease: "easeInOut" as const }}
-              className="fixed left-0 top-0 z-50 h-screen w-[200px] flex flex-col glass-strong border-r border-white/5 md:hidden"
+              className="fixed left-0 top-0 z-50 h-screen w-56 flex flex-col glass-strong border-r border-white/5 md:hidden"
             >
               {renderSidebarContent(true)}
             </motion.aside>
