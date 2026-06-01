@@ -26,7 +26,7 @@ import {
   Shield,
   Loader2,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, formatTitle } from "@/lib/utils";
 import { mockScheduledPosts, mockVaultItems } from "@/lib/mock-data";
 import { useAuth } from "@/hooks/use-auth";
 import IntegrationRequired from "@/components/dashboard/integration-required";
@@ -1324,7 +1324,7 @@ export default function SchedulerPage() {
                                       </span>
                                     )}
                                   </div>
-                                  <p className="text-[9px] font-semibold text-white truncate leading-none">{item.title}</p>
+                                  <p className="text-[9px] font-semibold text-white truncate leading-none">{formatTitle(item.title)}</p>
                                 </div>
                               </div>
                             );
