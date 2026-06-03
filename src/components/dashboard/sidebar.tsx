@@ -208,13 +208,12 @@ export default function Sidebar({
 
   return (
     <>
-      {/* Desktop Sidebar — width is controlled by CSS classes (not framer-motion)
-          so it is correct from the very first render (SSR + hydration). */}
+      {/* Desktop Sidebar — uses custom CSS classes from globals.css (not Tailwind)
+          so width is guaranteed to be correct in the deployed CSS bundle. */}
       <aside
         className={cn(
-          "hidden md:flex fixed left-0 top-0 z-40 h-screen flex-col glass-strong border-r border-white/5",
-          "overflow-hidden transition-[width] duration-300 ease-in-out",
-          collapsed ? "w-16" : "w-56"
+          "hidden md:flex fixed left-0 top-0 z-40 h-screen flex-col glass-strong border-r border-white/5 overflow-hidden",
+          collapsed ? "sidebar-w-sm" : "sidebar-w"
         )}
       >
         {renderSidebarContent(false)}
