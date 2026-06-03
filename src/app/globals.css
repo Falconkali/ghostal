@@ -310,3 +310,44 @@ body {
   border-radius: inherit;
   z-index: -1;
 }
+
+/* ============================================
+   Dashboard Layout — Sidebar Alignment
+   These are defined as plain CSS (not Tailwind)
+   so they are ALWAYS in the bundle regardless
+   of JIT class scanning.
+   sidebar-expanded  = w-56 = 14rem = 224px
+   sidebar-collapsed = w-16 = 4rem  =  64px
+   ============================================ */
+
+.sidebar-w {
+  width: 14rem;
+  transition: width 0.3s ease-in-out;
+}
+
+.sidebar-w-sm {
+  width: 4rem;
+  transition: width 0.3s ease-in-out;
+}
+
+@media (min-width: 768px) {
+  .md-ml-sidebar {
+    margin-left: 14rem;
+    transition: margin-left 0.3s ease-in-out;
+  }
+
+  .md-ml-sidebar-sm {
+    margin-left: 4rem;
+    transition: margin-left 0.3s ease-in-out;
+  }
+
+  .md-left-sidebar {
+    left: 14rem;
+    transition: left 0.3s ease-in-out;
+  }
+
+  .md-left-sidebar-sm {
+    left: 4rem;
+    transition: left 0.3s ease-in-out;
+  }
+}
