@@ -96,8 +96,8 @@ export default function Topbar({ onMobileMenuToggle, sidebarCollapsed }: TopbarP
   return (
     <header
       className={cn(
-        "fixed top-0 right-0 z-30 flex h-16 items-center justify-between border-b border-white/5 px-4 md:px-5 glass transition-[left] duration-300 ease-in-out left-0",
-        sidebarCollapsed ? "md:left-16" : "md:left-56"
+        "fixed top-0 right-0 z-30 flex h-16 items-center justify-between border-b border-white/5 px-4 md:px-5 glass left-0",
+        sidebarCollapsed ? "md-left-sidebar-sm" : "md-left-sidebar"
       )}
     >
       {/* Mobile menu toggle */}
