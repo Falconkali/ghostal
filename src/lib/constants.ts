@@ -1,14 +1,26 @@
 import type { PricingPlan, Testimonial } from "@/types";
 
-export const APP_NAME = "GhostFlow";
+export const APP_NAME = "Ghostal";
 export const APP_TAGLINE = "Maintain Content Consistency, Sustainably.";
 export const APP_DESCRIPTION =
-  "GhostFlow acts as a safety net for your Instagram queue — keeping your feed active even when you're offline.";
+  "Ghostal acts as a safety net for your Instagram queue — keeping your feed active even when you're offline.";
+
+/** Feature limits per plan. Use `usePlan()` hook to access these. */
+export const PLAN_LIMITS = {
+  free:        { vaultItems: 10,       ghostMode: false, aiSurvival: false, analyticsDays: 7  },
+  starter:     { vaultItems: 30,       ghostMode: false, aiSurvival: false, analyticsDays: 7  },
+  creator_pro: { vaultItems: 100,      ghostMode: true,  aiSurvival: false, analyticsDays: 30 },
+  survival_ai: { vaultItems: Infinity, ghostMode: true,  aiSurvival: true,  analyticsDays: 90 },
+  lifetime:    { vaultItems: Infinity, ghostMode: true,  aiSurvival: true,  analyticsDays: 90 },
+} as const;
+
+export type PlanKey = keyof typeof PLAN_LIMITS;
 
 export const NAV_LINKS = [
   { label: "Features", href: "#features" },
-  { label: "How It Works", href: "#comparison" },
-  { label: "Pricing", href: "#pricing" },
+  { label: "How It Works", href: "/how-it-works" },
+  { label: "Pricing", href: "/pricing" },
+  { label: "Calculator", href: "/calculator" },
   { label: "Testimonials", href: "#testimonials" },
 ] as const;
 
@@ -18,7 +30,9 @@ export const DASHBOARD_NAV = [
   { label: "Scheduler", href: "/scheduler", icon: "Calendar" },
   { label: "Ghost Mode", href: "/ghost-mode", icon: "Ghost" },
   { label: "AI Survival", href: "/ai-survival", icon: "Brain" },
+  { label: "What's Coming", href: "/upcoming", icon: "Rocket" },
   { label: "Analytics", href: "/analytics", icon: "BarChart3" },
+  { label: "Referrals", href: "/referrals", icon: "Users" },
   { label: "Settings", href: "/settings", icon: "Settings" },
 ] as const;
 
@@ -32,7 +46,7 @@ export const PRICING_PLANS: PricingPlan[] = [
     features: [
       "Basic scheduling",
       "1 Instagram account",
-      "50 vault items",
+      "30 vault items",
       "Basic queue management",
       "7-day analytics",
       "Email support",
@@ -49,9 +63,9 @@ export const PRICING_PLANS: PricingPlan[] = [
     features: [
       "Ghost Mode Autopilot",
       "AI caption refinement",
-      "Unlimited vault",
+      "100 vault items",
       "Backup backlog queue",
-      "3 Instagram accounts",
+      "1 Instagram account",
       "30-day analytics",
       "Queue empty alerts",
       "Priority support",
@@ -62,15 +76,15 @@ export const PRICING_PLANS: PricingPlan[] = [
   {
     name: "Survival AI",
     slug: "survival_ai",
-    price: 79,
+    price: 49,
     period: "month",
     description: "Full autopilot. Your account never sleeps.",
     features: [
       "Full backlog autopilot",
       "Momentum analytics",
       "Evergreen recycler",
-      "Advanced queue continuity",
-      "10 Instagram accounts",
+      "Unlimited vault items",
+      "1 Instagram account",
       "90-day analytics",
       "Custom AI training",
       "Emergency backup queue",
@@ -89,7 +103,7 @@ export const TESTIMONIALS: Testimonial[] = [
     handle: "@priyacreates",
     avatarUrl: "",
     content:
-      "I took a 3-week break during exams and came back to find GhostFlow had kept my account alive. My engagement actually GREW. This is insane.",
+      "I took a 3-week break during exams and came back to find Ghostal had kept my account alive. My engagement actually GREW. This is insane.",
     role: "Content Creator · 120K Followers",
     rating: 5,
   },
@@ -99,7 +113,7 @@ export const TESTIMONIALS: Testimonial[] = [
     handle: "@marcusvisuals",
     avatarUrl: "",
     content:
-      "I used to spend hours every Sunday refilling my Buffer queue. GhostFlow's survival system means I never have to worry about my queue dying again.",
+      "I used to spend hours every Sunday refilling my Buffer queue. Ghostal's survival system means I never have to worry about my queue dying again.",
     role: "Visual Artist · 85K Followers",
     rating: 5,
   },
@@ -129,7 +143,7 @@ export const TESTIMONIALS: Testimonial[] = [
     handle: "@jordanmotivates",
     avatarUrl: "",
     content:
-      "Switched from Hootsuite to GhostFlow 6 months ago. The difference? My growth never stops, even when I do. The AI continuity system is next-level.",
+      "Switched from Hootsuite to Ghostal 6 months ago. The difference? My growth never stops, even when I do. The AI continuity system is next-level.",
     role: "Motivational Speaker · 300K Followers",
     rating: 5,
   },
@@ -139,7 +153,7 @@ export const TESTIMONIALS: Testimonial[] = [
     handle: "@emmaeats",
     avatarUrl: "",
     content:
-      "As a food blogger who travels constantly, GhostFlow is a lifesaver. It pulls from my vault and keeps my feed fresh even when I'm off the grid.",
+      "As a food blogger who travels constantly, Ghostal is a lifesaver. It pulls from my vault and keeps my feed fresh even when I'm off the grid.",
     role: "Food Blogger · 150K Followers",
     rating: 5,
   },

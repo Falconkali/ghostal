@@ -26,10 +26,11 @@ import {
   Flame,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { mockGhostModeConfig } from "@/lib/mock-data";
 import type { GhostModeConfig, SurvivalLog } from "@/types";
 import { useAuth } from "@/hooks/use-auth";
+import { usePlan } from "@/hooks/use-plan";
 import IntegrationRequired from "@/components/dashboard/integration-required";
+import UpgradeWall from "@/components/dashboard/upgrade-wall";
 import { supabase } from "@/lib/supabase";
 import type { AutomationRunResult } from "@/components/dashboard/automation-runner";
 
@@ -95,8 +96,19 @@ const workflowSteps = [
 ];
 
 export default function GhostModePage() {
-  const { instagramConnected, user } = useAuth();
-  const [config, setConfig] = useState<GhostModeConfig>({ ...mockGhostModeConfig });
+  const { instagramConnected, user, updateGhostModeConfig } = useAuth();
+  const { plan, limits } = usePlan();
+
+  // Default config — immediately overridden by user.ghostModeConfig from auth context
+  const [config, setConfig] = useState<GhostModeConfig>(() => ({
+    enabled: false,
+    inactivityThresholdDays: 3,
+    emergencySurvivalMode: false,
+    aiFallbackBehavior: "remix_captions" as const,
+    maxSurvivalPostsPerWeek: 5,
+    preserveHashtags: true,
+    notifyOnActivation: true,
+  }));
   const [isConfigLoading, setIsConfigLoading] = useState(true);
 
   // Real-time Automation Engine State (from AutomationRunner broadcasts)
@@ -104,9 +116,20 @@ export default function GhostModePage() {
   const [isForceRunning, setIsForceRunning] = useState(false);
   const [forceRunResult, setForceRunResult] = useState<string | null>(null);
   const [forceRunProgress, setForceRunProgress] = useState<string | null>(null);
+  const [forceRunLogs, setForceRunLogs] = useState<string[]>([]);
+  const logTerminalRef = useRef<HTMLDivElement>(null);
+
+  // Scroll force-run logs to the bottom
+  useEffect(() => {
+    if (logTerminalRef.current) {
+      logTerminalRef.current.scrollTop = logTerminalRef.current.scrollHeight;
+    }
+  }, [forceRunLogs]);
+
 
   // Survival Logs (live from DB)
   const [survivalLogs, setSurvivalLogs] = useState<SurvivalLog[]>([]);
+  const [logsLimit, setLogsLimit] = useState(10);
 
   // Uptime ticker
   const [uptimeSeconds, setUptimeSeconds] = useState(0);
@@ -118,19 +141,30 @@ export default function GhostModePage() {
   const [refillSecsAgo, setRefillSecsAgo] = useState(0);
   const lastRunAtRef = useRef<number | null>(null);
 
+  // Hydrate config from auth context immediately (no extra DB round-trip)
+  useEffect(() => {
+    if (user?.ghostModeConfig) {
+      setConfig(user.ghostModeConfig as GhostModeConfig);
+    }
+  }, [user?.ghostModeConfig]);
+
   // ──────────────────────────────────────────────
-  // Load initial config + logs from Supabase
+  // Load initial config + logs from Supabase (full refresh)
   // ──────────────────────────────────────────────
   useEffect(() => {
-    if (!user) return;
+    if (!user?.id) return;
 
     const init = async () => {
       try {
-        const { data: profile } = await supabase
+        const { data: profile, error: profileError } = await supabase
           .from("profiles")
           .select("ghost_mode_config, created_at")
           .eq("id", user.id)
           .single();
+
+        if (profileError) {
+          console.error("[GhostMode] Profile fetch error:", profileError);
+        }
 
         if (profile?.ghost_mode_config) {
           setConfig(profile.ghost_mode_config as GhostModeConfig);
@@ -145,17 +179,16 @@ export default function GhostModePage() {
           setUptimeSeconds(diffSecs);
         }
 
-        // Load most recent 10 survival logs
         await fetchLogs();
       } catch (err) {
-        console.error("Error loading ghost mode config:", err);
+        console.error("[GhostMode] Error loading config:", err);
       } finally {
         setIsConfigLoading(false);
       }
     };
 
     init();
-  }, [user]);
+  }, [user?.id]);
 
   // ──────────────────────────────────────────────
   // Fetch recent survival logs
@@ -167,7 +200,7 @@ export default function GhostModePage() {
       .select("*")
       .eq("user_id", user.id)
       .order("timestamp", { ascending: false })
-      .limit(10);
+      .limit(logsLimit);
 
     if (data) {
       setSurvivalLogs(
@@ -181,7 +214,7 @@ export default function GhostModePage() {
         }))
       );
     }
-  }, [user]);
+  }, [user, logsLimit]);
 
   // ──────────────────────────────────────────────
   // Listen to AutomationRunner broadcasts
@@ -204,7 +237,7 @@ export default function GhostModePage() {
         if (config.notifyOnActivation && "Notification" in window) {
           Notification.requestPermission().then((perm) => {
             if (perm === "granted") {
-              new Notification("GhostFlow Automation", {
+              new Notification("Ghostal Automation", {
                 body: `Ghost Mode active: ${result.publishedCount} post${
                   result.publishedCount !== 1 ? "s" : ""
                 } published${result.resurrectedPost ? ", 1 content resurrected" : ""}.`,
@@ -287,14 +320,8 @@ export default function GhostModePage() {
     if (!user) return;
     const updated = { ...config, [key]: value };
     setConfig(updated);
-
-    try {
-      await supabase
-        .from("profiles")
-        .update({ ghost_mode_config: updated })
-        .eq("id", user.id);
-    } catch (err) {
-      console.error("Failed to save ghost mode config:", err);
+    if (updateGhostModeConfig) {
+      await updateGhostModeConfig(updated);
     }
   };
 
@@ -306,23 +333,41 @@ export default function GhostModePage() {
     setIsForceRunning(true);
     setForceRunResult(null);
     setForceRunProgress(null);
+    setForceRunLogs([]);
+
+    const time = () => new Date().toLocaleTimeString();
+    const addLog = (msg: string) => {
+      setForceRunLogs((prev) => [...prev, `[${time()}] ${msg}`]);
+    };
+
+    addLog("Initializing manual engine cycle...");
+    addLog("Verifying Supabase connection and user session...");
 
     try {
+      addLog("Dynamically importing automation module...");
       // Import lazily to avoid circular issues
       const { checkAndPublishDuePosts, runAISurvivalRefill } = await import(
         "@/lib/automation"
       );
 
+      addLog("Starting Post Publisher check...");
       setForceRunProgress("Checking for due posts...");
       const publishedIds = await checkAndPublishDuePosts(
         user.id,
         supabase,
-        (msg) => setForceRunProgress(msg)
+        (msg) => {
+          setForceRunProgress(msg);
+          addLog(`[Publisher] ${msg}`);
+        }
       );
+
+      addLog(`Post Publisher complete. Published ${publishedIds.length} post(s).`);
 
       let resurrectedPost = null;
       if (config.enabled) {
+        addLog("Ghost Mode is ENABLED. Starting Ghost Monitor/Refill check...");
         setForceRunProgress("Checking queue health...");
+        addLog("[Monitor] Checking scheduled queue health...");
         resurrectedPost = await runAISurvivalRefill(
           user.id,
           config.inactivityThresholdDays,
@@ -335,10 +380,20 @@ export default function GhostModePage() {
             maxSurvivalPostsPerWeek: config.maxSurvivalPostsPerWeek,
           }
         );
+
+        if (resurrectedPost) {
+          addLog(`[Refill] ✓ Queue low! Resurrected post ID: ${resurrectedPost.id}`);
+          addLog(`[Refill] Caption remixed using behavior: ${config.aiFallbackBehavior}`);
+        } else {
+          addLog("[Refill] Queue health is optimal or limit reached. No resurrection needed.");
+        }
+      } else {
+        addLog("Ghost Mode is DISABLED. Skipping queue health and AI refill check.");
       }
 
       // Only write a log entry if something actually happened (prevents log spam)
       if (publishedIds.length > 0 || resurrectedPost) {
+        addLog("Writing survival logs to database...");
         await supabase.from("survival_logs").insert({
           user_id: user.id,
           action: "Manual Trigger",
@@ -352,7 +407,7 @@ export default function GhostModePage() {
         if (config.notifyOnActivation && "Notification" in window) {
           const perm = await Notification.requestPermission();
           if (perm === "granted") {
-            new Notification("GhostFlow Automation", {
+            new Notification("Ghostal Automation", {
               body: `${publishedIds.length} post${
                 publishedIds.length !== 1 ? "s" : ""
               } published${resurrectedPost ? ", 1 content resurrected" : ""}.`,
@@ -363,13 +418,15 @@ export default function GhostModePage() {
       }
 
       if (publishedIds.length > 0 || resurrectedPost) {
-        setForceRunResult(
-          `✓ Cycle complete: ${publishedIds.length} published${
-            resurrectedPost ? ", 1 resurrected" : ""
-          }`
-        );
+        const finalMsg = `✓ Cycle complete: ${publishedIds.length} published${
+          resurrectedPost ? ", 1 resurrected" : ""
+        }`;
+        setForceRunResult(finalMsg);
+        addLog(finalMsg);
       } else {
-        setForceRunResult("✓ Cycle complete: everything healthy, nothing to do");
+        const finalMsg = "✓ Cycle complete: everything healthy, nothing to do";
+        setForceRunResult(finalMsg);
+        addLog(finalMsg);
       }
 
       await fetchLogs();
@@ -378,11 +435,14 @@ export default function GhostModePage() {
       setRefillSecsAgo(0);
       lastRunAtRef.current = Date.now();
     } catch (err: any) {
+      const errMsg = `✗ Error: ${err.message || "Unknown error"}`;
       console.error("Force run error:", err);
-      setForceRunResult(`✗ Error: ${err.message || "Unknown error"}`);
+      setForceRunResult(errMsg);
+      addLog(errMsg);
     } finally {
       setIsForceRunning(false);
       setForceRunProgress(null);
+      addLog("Manual engine cycle execution thread ended.");
       setTimeout(() => setForceRunResult(null), 6000);
     }
   };
@@ -392,6 +452,17 @@ export default function GhostModePage() {
       <IntegrationRequired
         pageName="Ghost Mode Control"
         description="Configure inactivity triggers, set max backup publication limits, customize caption remix behavior, and activate system defense protocols by connecting your Instagram account."
+      />
+    );
+  }
+
+  if (!limits.ghostMode) {
+    return (
+      <UpgradeWall
+        feature="Ghost Mode"
+        description="Ghost Mode automatically keeps your Instagram feed active when you go quiet. Upgrade to Creator Pro or higher to unlock this feature."
+        requiredPlan="creator_pro"
+        currentPlan={plan}
       />
     );
   }
@@ -569,7 +640,7 @@ export default function GhostModePage() {
                 <p className="text-sm font-semibold text-white">
                   Ghost Mode is monitoring your queue
                 </p>
-                <p className="text-xs text-zinc-400">
+                <p className="text-xs text-muted-foreground">
                   Autopilot will backfill queue slots from the vault if no posts are scheduled for {config.inactivityThresholdDays}{" "}
                   day{config.inactivityThresholdDays !== 1 ? "s" : ""}s
                 </p>
@@ -593,7 +664,7 @@ export default function GhostModePage() {
               <Cpu className="h-5 w-5" />
             </div>
             <div className="flex flex-col">
-              <h2 className="text-lg font-bold text-white tracking-tight">
+              <h2 className="text-lg font-bold text-foreground tracking-tight">
                 Automation Engine
               </h2>
               <div className="flex items-center gap-1.5 text-xs text-zinc-400 mt-1">
@@ -602,7 +673,7 @@ export default function GhostModePage() {
                   <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
                 </span>
                 <span>
-                  Running • uptime {formatUptime(uptimeSeconds)} • {totalRuns} log entries
+                  Running • {lastRunAtRef.current !== null ? `Next cycle in ${formatAgo(Math.max(0, 300 - (publisherSecsAgo % 300))).replace(" ago", "")} • ` : ""}uptime {formatUptime(uptimeSeconds)} • {totalRuns} log entries
                 </span>
               </div>
             </div>
@@ -668,6 +739,63 @@ export default function GhostModePage() {
                 <XCircle className="h-4 w-4 shrink-0" />
               )}
               {forceRunResult}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Interactive feedback logs terminal */}
+        <AnimatePresence>
+          {forceRunLogs.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              className="overflow-hidden"
+            >
+              <div className="rounded-xl border border-white/5 bg-[#09090e]/95 p-4 font-mono text-xs leading-relaxed shadow-inner">
+                <div className="flex items-center justify-between border-b border-white/5 pb-2 mb-2">
+                  <div className="flex items-center gap-1.5">
+                    <span className="h-2 w-2 rounded-full bg-red-500/60" />
+                    <span className="h-2 w-2 rounded-full bg-yellow-500/60" />
+                    <span className="h-2 w-2 rounded-full bg-green-500/60" />
+                    <span className="text-xs text-zinc-500 font-semibold uppercase tracking-wider ml-1">
+                      Engine Console Feedbacks
+                    </span>
+                  </div>
+                  {isForceRunning ? (
+                    <span className="flex items-center gap-1 text-[10px] text-violet-400">
+                      <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                      Streaming...
+                    </span>
+                  ) : (
+                    <button
+                      onClick={() => setForceRunLogs([])}
+                      className="text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors cursor-pointer"
+                    >
+                      Clear Logs
+                    </button>
+                  )}
+                </div>
+                <div 
+                  ref={logTerminalRef}
+                  className="max-h-[160px] overflow-y-auto space-y-1 custom-scrollbar pr-1"
+                >
+                  {forceRunLogs.map((log, idx) => {
+                    let colorClass = "text-zinc-400";
+                    if (log.includes("[Publisher]")) colorClass = "text-emerald-400/90";
+                    else if (log.includes("[Monitor]")) colorClass = "text-amber-400/90";
+                    else if (log.includes("[Refill]")) colorClass = "text-violet-400/95";
+                    else if (log.includes("✓")) colorClass = "text-emerald-400 font-medium";
+                    else if (log.includes("✗")) colorClass = "text-red-400 font-medium";
+                    
+                    return (
+                      <div key={idx} className={cn("whitespace-pre-wrap break-all px-2 py-1 rounded", idx % 2 === 0 ? "bg-white/[0.02]" : "", colorClass)}>
+                        {log}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
@@ -816,14 +944,14 @@ export default function GhostModePage() {
               <motion.div
                 initial={{ width: 0 }}
                 animate={{
-                  width: `${Math.min((engineResult.queueCount / 10) * 100, 100)}%`,
+                  width: `${Math.min((engineResult.queueCount / 30) * 100, 100)}%`,
                 }}
                 transition={{ duration: 0.6 }}
                 className={cn(
                   "h-full rounded-full bg-gradient-to-r",
                   engineResult.queueCount < 3
                     ? "from-red-500 to-orange-500"
-                    : engineResult.queueCount < 6
+                    : engineResult.queueCount < 10
                     ? "from-amber-500 to-yellow-500"
                     : "from-emerald-500 to-cyan-500"
                 )}
@@ -833,11 +961,11 @@ export default function GhostModePage() {
               <span>0</span>
               <span className={cn(
                 "font-medium",
-                engineResult.queueCount < 3 ? "text-red-400" : engineResult.queueCount < 6 ? "text-amber-400" : "text-emerald-400"
+                engineResult.queueCount < 3 ? "text-red-400" : engineResult.queueCount < 10 ? "text-amber-400" : "text-emerald-400"
               )}>
-                {engineResult.queueCount < 3 ? "⚠ Critical" : engineResult.queueCount < 6 ? "Low" : "Healthy"}
+                {engineResult.queueCount < 3 ? "⚠ Critical" : engineResult.queueCount < 10 ? "Low" : "Healthy"}
               </span>
-              <span>10+</span>
+              <span>30+</span>
             </div>
           </div>
         )}
@@ -855,15 +983,22 @@ export default function GhostModePage() {
               <Clock className="h-5 w-5 text-amber-400" />
             </div>
             <div>
-              <h3 className="text-sm font-semibold text-white">Inactivity Threshold</h3>
+              <h3 className="text-sm font-semibold text-foreground">Inactivity Threshold</h3>
               <p className="text-xs text-zinc-500">Days before activation</p>
             </div>
           </div>
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <span className="text-3xl font-bold text-white">
-                {config.inactivityThresholdDays}
-              </span>
+              <div className="flex items-end gap-2">
+                <input
+                  type="number"
+                  min={1}
+                  max={14}
+                  value={config.inactivityThresholdDays}
+                  onChange={(e) => updateConfig("inactivityThresholdDays", Math.max(1, Math.min(14, parseInt(e.target.value) || 1)))}
+                  className="w-16 bg-transparent text-3xl font-bold text-white border-b-2 border-transparent focus:border-violet-500 focus:outline-none transition-colors p-0 text-center"
+                />
+              </div>
               <span className="text-xs text-zinc-500">days</span>
             </div>
             <input
@@ -890,7 +1025,7 @@ export default function GhostModePage() {
               <Shield className="h-5 w-5 text-red-400" />
             </div>
             <div>
-              <h3 className="text-sm font-semibold text-white">Emergency Survival</h3>
+              <h3 className="text-sm font-semibold text-foreground">Emergency Survival</h3>
               <p className="text-xs text-zinc-500">Extreme protection mode</p>
             </div>
           </div>
@@ -923,26 +1058,48 @@ export default function GhostModePage() {
               <Brain className="h-5 w-5 text-violet-400" />
             </div>
             <div>
-              <h3 className="text-sm font-semibold text-white">AI Fallback Behavior</h3>
+              <h3 className="text-sm font-semibold text-foreground">AI Fallback Behavior</h3>
               <p className="text-xs text-zinc-500">How AI responds</p>
             </div>
           </div>
-          <div className="space-y-2">
+          <div className="grid gap-2 mt-4">
             {(["repost_evergreen", "remix_captions", "full_ai"] as const).map(
-              (behavior) => (
-                <button
-                  key={behavior}
-                  onClick={() => updateConfig("aiFallbackBehavior", behavior)}
-                  className={cn(
-                    "w-full text-left rounded-lg px-3 py-2.5 text-xs font-medium border transition-all cursor-pointer",
-                    config.aiFallbackBehavior === behavior
-                      ? "bg-violet-500/10 text-violet-400 border-violet-500/30"
-                      : "bg-white/[0.02] text-zinc-400 border-white/5 hover:bg-white/5"
-                  )}
-                >
-                  {fallbackLabels[behavior]}
-                </button>
-              )
+              (behavior) => {
+                const isSelected = config.aiFallbackBehavior === behavior;
+                let title = "";
+                let desc = "";
+                if (behavior === "repost_evergreen") {
+                  title = "Repost Evergreen";
+                  desc = "Recycles your best performing older posts exactly as they were.";
+                } else if (behavior === "remix_captions") {
+                  title = "Remix Captions";
+                  desc = "Recycles older media but generates fresh AI captions.";
+                } else {
+                  title = "Full AI";
+                  desc = "Generates entirely new captions and imagery from scratch.";
+                }
+                
+                return (
+                  <button
+                    key={behavior}
+                    onClick={() => updateConfig("aiFallbackBehavior", behavior)}
+                    className={cn(
+                      "w-full text-left rounded-lg p-3 border transition-all cursor-pointer flex flex-col gap-1",
+                      isSelected
+                        ? "bg-violet-500/10 border-violet-500/40"
+                        : "bg-white/[0.02] border-white/5 hover:bg-white/5"
+                    )}
+                  >
+                    <div className="flex items-center justify-between w-full">
+                      <span className={cn("text-xs font-semibold", isSelected ? "text-violet-400" : "text-zinc-300")}>{title}</span>
+                      <div className={cn("h-3 w-3 rounded-full border flex items-center justify-center", isSelected ? "border-violet-500" : "border-zinc-600")}>
+                        {isSelected && <div className="h-1.5 w-1.5 rounded-full bg-violet-500" />}
+                      </div>
+                    </div>
+                    <span className="text-[10px] text-zinc-500 leading-tight">{desc}</span>
+                  </button>
+                )
+              }
             )}
           </div>
         </div>
@@ -954,30 +1111,37 @@ export default function GhostModePage() {
               <Zap className="h-5 w-5 text-cyan-400" />
             </div>
             <div>
-              <h3 className="text-sm font-semibold text-white">Max Survival Posts</h3>
+              <h3 className="text-sm font-semibold text-foreground">Max Survival Posts</h3>
               <p className="text-xs text-zinc-500">Per week limit</p>
             </div>
           </div>
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <span className="text-3xl font-bold text-white">
-                {config.maxSurvivalPostsPerWeek}
-              </span>
+              <div className="flex items-end gap-2">
+                <input
+                  type="number"
+                  min={1}
+                  max={30}
+                  value={config.maxSurvivalPostsPerWeek}
+                  onChange={(e) => updateConfig("maxSurvivalPostsPerWeek", Math.max(1, Math.min(30, parseInt(e.target.value) || 1)))}
+                  className="w-16 bg-transparent text-3xl font-bold text-white border-b-2 border-transparent focus:border-cyan-500 focus:outline-none transition-colors p-0 text-center"
+                />
+              </div>
               <span className="text-xs text-zinc-500">per week</span>
             </div>
             <input
               type="range"
               min={1}
-              max={10}
+              max={30}
               value={config.maxSurvivalPostsPerWeek}
               onChange={(e) =>
                 updateConfig("maxSurvivalPostsPerWeek", parseInt(e.target.value))
               }
               className="w-full h-1.5 rounded-full appearance-none cursor-pointer bg-white/10 accent-cyan-500 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-cyan-500 [&::-webkit-slider-thumb]:shadow-[0_0_10px_rgba(6,182,212,0.5)]"
             />
-            <div className="flex justify-between text-[10px] text-zinc-600">
+              <div className="flex justify-between text-[10px] text-zinc-600">
               <span>1</span>
-              <span>10</span>
+              <span>30</span>
             </div>
           </div>
         </div>
@@ -989,7 +1153,7 @@ export default function GhostModePage() {
               <Hash className="h-5 w-5 text-pink-400" />
             </div>
             <div>
-              <h3 className="text-sm font-semibold text-white">Preserve Hashtags</h3>
+              <h3 className="text-sm font-semibold text-foreground">Preserve Hashtags</h3>
               <p className="text-xs text-zinc-500">Keep original hashtags</p>
             </div>
           </div>
@@ -1020,7 +1184,7 @@ export default function GhostModePage() {
               <Bell className="h-5 w-5 text-blue-400" />
             </div>
             <div>
-              <h3 className="text-sm font-semibold text-white">Notify on Activation</h3>
+              <h3 className="text-sm font-semibold text-foreground">Notify on Activation</h3>
               <p className="text-xs text-zinc-500">Alert when Ghost Mode acts</p>
             </div>
           </div>
@@ -1055,7 +1219,7 @@ export default function GhostModePage() {
         className="glass rounded-2xl p-6 border border-white/5 hover:border-violet-500/10 transition-all"
       >
         <div className="flex items-center justify-between mb-5">
-          <h2 className="text-sm font-bold text-white flex items-center gap-2">
+          <h2 className="text-sm font-bold text-foreground flex items-center gap-2">
             <Zap className="h-4 w-4 text-amber-400" />
             Recent Automation Activity
           </h2>
@@ -1126,13 +1290,23 @@ export default function GhostModePage() {
                 </div>
               </div>
             ))}
+            {survivalLogs.length >= logsLimit && (
+              <div className="pt-2 pb-1 text-center">
+                <button
+                  onClick={() => setLogsLimit(prev => prev + 10)}
+                  className="px-4 py-1.5 rounded-full bg-white/5 hover:bg-white/10 text-xs text-zinc-300 font-medium transition-colors cursor-pointer"
+                >
+                  Load More Activity
+                </button>
+              </div>
+            )}
           </div>
         )}
       </motion.div>
 
       {/* Workflow Diagram */}
       <motion.div variants={item} className="space-y-4">
-        <h2 className="text-lg font-bold text-white text-center">
+        <h2 className="text-lg font-bold text-foreground text-center">
           How Ghost Mode Protects You
         </h2>
         <p className="text-sm text-zinc-400 text-center max-w-lg mx-auto">

@@ -29,7 +29,7 @@ export default function DashboardLayout({
     return (
       <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-3">
         <Loader2 className="h-8 w-8 text-violet-500 animate-spin" />
-        <p className="text-sm text-zinc-400 font-medium">Validating session...</p>
+        <p className="text-sm text-muted-foreground font-medium">Validating session...</p>
       </div>
     );
   }

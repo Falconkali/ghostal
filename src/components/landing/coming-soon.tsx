@@ -50,7 +50,7 @@ export default function ComingSoon() {
             <span className="gradient-text">Expanding to More Platforms</span>
           </h2>
           <p className="mx-auto mt-4 max-w-2xl text-base text-white/50 sm:text-lg">
-            GhostFlow is coming to every platform where creators need protection.
+            Ghostal is coming to every platform where creators need protection.
           </p>
         </motion.div>
 

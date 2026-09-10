@@ -59,8 +59,19 @@ export async function updateSession(request: NextRequest) {
   // Route Protection Logic
   const path = request.nextUrl.pathname;
 
-  const protectedPaths = ["/dashboard", "/vault", "/scheduler", "/ghost-mode", "/ai-survival", "/settings"];
-  const isProtectedRoute = protectedPaths.some(p => path === p || path.startsWith(p + "/"));
+  const protectedPrefixes = [
+    "/dashboard",
+    "/vault",
+    "/scheduler",
+    "/ghost-mode",
+    "/ai-survival",
+    "/settings",
+    "/analytics",
+    "/api/private",
+    "/api/instagram",
+    "/api/vault"
+  ];
+  const isProtectedRoute = protectedPrefixes.some(p => path === p || path.startsWith(p + "/"));
 
   const authPaths = ["/login", "/signup", "/forgot-password"];
   const isAuthRoute = authPaths.some(p => path === p || path.startsWith(p + "/"));

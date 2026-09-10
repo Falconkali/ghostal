@@ -1,5 +1,5 @@
 // ============================================
-// GhostFlow TypeScript Types
+// Ghostal TypeScript Types
 // ============================================
 
 export interface User {

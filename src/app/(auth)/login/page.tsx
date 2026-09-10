@@ -4,21 +4,16 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { motion } from "framer-motion";
+import Image from "next/image";
 import {
-  Ghost,
   Mail,
   Lock,
   Eye,
   EyeOff,
   Loader2,
-  Chrome,
-  Apple,
-  Twitter,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-
 import { useAuth } from "@/hooks/use-auth";
-import { supabase } from "@/lib/supabase";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -41,7 +36,7 @@ export default function LoginPage() {
 
     setIsLoading(true);
     try {
-      await login(email, password);
+      await login(email, password, rememberMe);
       router.push("/dashboard");
     } catch (err: any) {
       setError(err.message || "Invalid credentials. Please try again.");
@@ -51,20 +46,7 @@ export default function LoginPage() {
   };
 
   const handleSocialLogin = async (provider: string) => {
-    setIsLoading(true);
-    setError("");
-    try {
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: provider.toLowerCase() as any,
-        options: {
-          redirectTo: `${window.location.origin}/callback`,
-        },
-      });
-      if (error) throw error;
-    } catch (err: any) {
-      setError(err.message || `Failed to sign in with ${provider}`);
-      setIsLoading(false);
-    }
+    setError(`${provider} login is coming soon. Please use email and password for now.`);
   };
 
   const containerVariants = {
@@ -96,10 +78,10 @@ export default function LoginPage() {
       animate="visible"
       className="glass-strong glow-violet rounded-2xl p-8"
     >
-      {/* Ghost icon */}
+      {/* Logo */}
       <motion.div variants={itemVariants} className="mb-6 flex justify-center">
-        <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-500/20 to-cyan-500/20 ring-1 ring-white/10">
-          <Ghost className="h-7 w-7 text-violet-400" />
+        <div className="flex h-14 w-14 items-center justify-center">
+          <Image src="/logo.png" alt="Ghostal" width={56} height={56} className="object-contain rounded-xl" />
         </div>
       </motion.div>
 
@@ -107,7 +89,7 @@ export default function LoginPage() {
       <motion.div variants={itemVariants} className="mb-8 text-center">
         <h1 className="text-2xl font-bold text-white">Welcome back</h1>
         <p className="mt-1 text-sm text-white/50">
-          Sign in to your GhostFlow account
+          Sign in to your Ghostal account
         </p>
       </motion.div>
 
@@ -193,7 +175,7 @@ export default function LoginPage() {
           variants={itemVariants}
           className="flex items-center justify-between"
         >
-          <label className="flex cursor-pointer items-center gap-2">
+          <label className="flex cursor-pointer items-center gap-2" title="Session persists for 1 week when checked">
             <div className="relative">
               <input
                 type="checkbox"
@@ -259,43 +241,7 @@ export default function LoginPage() {
         </motion.div>
       </form>
 
-      {/* Divider */}
-      <motion.div
-        variants={itemVariants}
-        className="my-6 flex items-center gap-3"
-      >
-        <div className="h-px flex-1 bg-white/10" />
-        <span className="text-xs text-white/30">or continue with</span>
-        <div className="h-px flex-1 bg-white/10" />
-      </motion.div>
 
-      {/* Social buttons */}
-      <motion.div
-        variants={itemVariants}
-        className="grid grid-cols-3 gap-3"
-      >
-        {[
-          { icon: Chrome, label: "Google" },
-          { icon: Apple, label: "Apple" },
-          { icon: Twitter, label: "Twitter" },
-        ].map(({ icon: Icon, label }) => (
-          <button
-            key={label}
-            type="button"
-            onClick={() => handleSocialLogin(label)}
-            disabled={isLoading}
-            className={cn(
-              "glass flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm text-white/70",
-              "transition-all duration-200 hover:bg-white/10 hover:text-white",
-              "focus:outline-none focus:ring-2 focus:ring-violet-500/30",
-              "disabled:cursor-not-allowed disabled:opacity-40"
-            )}
-          >
-            <Icon className="h-4 w-4" />
-            <span className="hidden sm:inline">{label}</span>
-          </button>
-        ))}
-      </motion.div>
 
       {/* Bottom link */}
       <motion.p

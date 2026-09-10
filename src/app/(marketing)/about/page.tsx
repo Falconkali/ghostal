@@ -35,7 +35,7 @@ const team = [
   {
     name: "Alex Sterling",
     role: "Co-Founder & CEO",
-    bio: "Ex-Instagram growth engineer. Built GhostFlow after experiencing severe creator burnout first-hand.",
+    bio: "Ex-Instagram growth engineer. Built Ghostal after experiencing severe creator burnout first-hand.",
     avatar: "AS",
   },
   {

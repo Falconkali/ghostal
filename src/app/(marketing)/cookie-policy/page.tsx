@@ -2,7 +2,7 @@ import { APP_NAME } from "@/lib/constants";
 
 export const metadata = {
   title: `Cookie Policy — ${APP_NAME}`,
-  description: "Learn how GhostFlow uses cookies and tracking technologies to improve our dashboard and secure user sessions.",
+  description: "Learn how Ghostal uses cookies and tracking technologies to improve our dashboard and secure user sessions.",
 };
 
 export default function CookiePolicyPage() {

@@ -2,7 +2,7 @@ import { APP_NAME } from "@/lib/constants";
 
 export const metadata = {
   title: `GDPR Compliance — ${APP_NAME}`,
-  description: "Learn about your GDPR rights, data portability, and how to request data erasure or export at GhostFlow.",
+  description: "Learn about your GDPR rights, data portability, and how to request data erasure or export at Ghostal.",
 };
 
 export default function GdprPage() {
@@ -49,8 +49,8 @@ export default function GdprPage() {
             <p className="text-white/60 leading-relaxed">
               To request a data export, modify permissions, or delete your entire record, please email us. We process all valid DSARs within 30 days of receiving the request and verifying your identity.
             </p>
-            <a id="gdpr-email" href="mailto:privacy@ghostflow.ai" className="text-sm font-semibold text-violet-400 hover:text-violet-300">
-              privacy@ghostflow.ai
+            <a id="gdpr-email" href="mailto:support@ghostal.xyz" className="text-sm font-semibold text-violet-400 hover:text-violet-300">
+              support@ghostal.xyz
             </a>
           </section>
 

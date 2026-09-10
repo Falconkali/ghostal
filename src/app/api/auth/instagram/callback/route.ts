@@ -107,7 +107,7 @@ export async function GET(request: NextRequest) {
     const longLivedToken = longLivedData.access_token;
 
     // 3. Fetch the Instagram username AND correct user ID from the long-lived token
-    const profileRes = await fetch(`https://graph.instagram.com/v21.0/me?fields=id,username&access_token=${longLivedToken}`);
+    const profileRes = await fetch(`https://graph.instagram.com/v21.0/me?fields=id,username,profile_picture_url&access_token=${longLivedToken}`);
     const profileData = await profileRes.json();
 
     if (profileData.error) {
@@ -116,9 +116,26 @@ export async function GET(request: NextRequest) {
     }
 
     const instagramHandle = profileData.username;
-    // Use the ID returned by the me endpoint — this is the correct Instagram User ID
-    // for publishing via graph.instagram.com (NOT the app-scoped ID from tokenData.user_id)
     const realInstagramId = profileData.id || String(instagramUserId);
+    const profilePictureUrl = profileData.profile_picture_url || null;
+
+    // 4. Fetch follower/following/post counts (available at connect time)
+    let followersCount = 0;
+    let followingCount = 0;
+    let mediaCount = 0;
+    try {
+      const statsRes = await fetch(
+        `https://graph.instagram.com/v21.0/me?fields=followers_count,follows_count,media_count&access_token=${longLivedToken}`
+      );
+      const statsData = await statsRes.json();
+      if (!statsData.error) {
+        followersCount = statsData.followers_count ?? 0;
+        followingCount = statsData.follows_count ?? 0;
+        mediaCount = statsData.media_count ?? 0;
+      }
+    } catch {
+      // Non-critical — counts will be fetched lazily later
+    }
 
     // 4. Save to Supabase profiles table
     const { error: updateError } = await supabase
@@ -126,8 +143,13 @@ export async function GET(request: NextRequest) {
       .update({
         instagram_connected: true,
         instagram_handle: instagramHandle,
+        instagram_username: instagramHandle,
         instagram_token: encrypt(longLivedToken),
         instagram_id: realInstagramId,
+        instagram_profile_picture_url: profilePictureUrl,
+        instagram_followers_count: followersCount,
+        instagram_following_count: followingCount,
+        instagram_media_count: mediaCount,
       })
       .eq("id", user.id);
 

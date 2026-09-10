@@ -45,7 +45,7 @@ Data from creator analytics platforms consistently shows that accounts which all
 
 ## Ghost Mode: A Technical Solution
 
-Tools like GhostFlow's Ghost Mode exist precisely to protect your reach score during unavoidable gaps. By pre-loading a survival queue of evergreen content that auto-publishes on your behalf, the algorithm never detects an inactivity gap — meaning your reach stays intact even during vacations, burnout recovery, or creative blocks.
+Tools like Ghostal's Ghost Mode exist precisely to protect your reach score during unavoidable gaps. By pre-loading a survival queue of evergreen content that auto-publishes on your behalf, the algorithm never detects an inactivity gap — meaning your reach stays intact even during vacations, burnout recovery, or creative blocks.
 
 ## Practical Takeaways
 
@@ -147,9 +147,9 @@ Instructions:
 - Output only the caption text, no explanation
 \`\`\`
 
-## What GhostFlow's AI Does Differently
+## What Ghostal's AI Does Differently
 
-GhostFlow's caption remix engine feeds your historical vault captions as context alongside the remix prompt. This means the AI isn't working from a generic voice profile — it's pattern-matching against your actual body of work. The result is meaningfully more authentic than any off-the-shelf GPT prompt.
+Ghostal's caption remix engine feeds your historical vault captions as context alongside the remix prompt. This means the AI isn't working from a generic voice profile — it's pattern-matching against your actual body of work. The result is meaningfully more authentic than any off-the-shelf GPT prompt.
 
 ## Red Flags to Watch For
 
@@ -197,7 +197,7 @@ A content vault is a structured library of evergreen assets tagged by:
 4. **Performance tier** (Top 20%, Mid, Experimental)
 5. **Last published date** (to prevent over-recycling)
 
-GhostFlow's Vault feature does all of this automatically — every asset you upload is tagged, scored, and queued for intelligent recycling based on its performance history and time since last use.
+Ghostal's Vault feature does all of this automatically — every asset you upload is tagged, scored, and queued for intelligent recycling based on its performance history and time since last use.
 
 ## The Recycling Rule
 
@@ -242,7 +242,7 @@ export async function generateMetadata({
   const post = getPost(slug);
   if (!post) return { title: "Article Not Found" };
   return {
-    title: `${post.title} — GhostFlow Blog`,
+    title: `${post.title} — Ghostal Blog`,
     description: post.excerpt,
   };
 }
@@ -415,7 +415,7 @@ export default async function BlogPostPage({
             Never miss a post again
           </h2>
           <p className="text-sm text-white/50 mb-6 max-w-md mx-auto">
-            GhostFlow keeps your Instagram presence alive even when life gets in the way. Start your free trial today.
+            Ghostal keeps your Instagram presence alive even when life gets in the way. Start your free trial today.
           </p>
           <Link
             href="/signup"

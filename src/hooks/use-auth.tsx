@@ -6,6 +6,7 @@ import {
   useState,
   useEffect,
   useCallback,
+  useRef,
   type ReactNode,
 } from "react";
 import { useRouter } from "next/navigation";
@@ -22,13 +23,23 @@ export interface User {
   onboardingCompleted?: boolean;
   plan?: string;
   planExpiresAt?: string | null;
+  ghostModeConfig?: {
+    enabled: boolean;
+    inactivityThresholdDays: number;
+    emergencySurvivalMode: boolean;
+    aiFallbackBehavior: string;
+    maxSurvivalPostsPerWeek: number;
+    preserveHashtags: boolean;
+    notifyOnActivation: boolean;
+  } | null;
+  instagramProfilePictureUrl?: string | null;
 }
 
 interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
   isLoading: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string, rememberMe?: boolean) => Promise<void>;
   signup: (name: string, email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   instagramConnected: boolean;
@@ -37,6 +48,7 @@ interface AuthContextType {
   disconnectInstagram: () => Promise<void>;
   updateProfile: (name: string, email: string, avatarUrl?: string) => Promise<void>;
   completeOnboarding: (niche: string, frequency: string, ghostMode: boolean, triggerDays: number) => Promise<void>;
+  updateGhostModeConfig: (config: any) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -47,6 +59,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const [instagramConnected, setInstagramConnected] = useState(false);
   const [instagramHandle, setInstagramHandle] = useState<string | null>(null);
+  // Track the currently loaded user ID to skip redundant re-auth profile fetches
+  const loadedUserIdRef = useRef<string | null>(null);
 
   // Sync profile details from public.profiles table
   const fetchProfile = useCallback(async (authUserId: string, authUserEmail: string) => {
@@ -81,14 +95,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             setInstagramConnected(newProfile.instagram_connected || false);
             setInstagramHandle(newProfile.instagram_handle || null);
             
-            // Sync theme immediately
+            // Always enforce dark mode
             if (typeof window !== "undefined") {
               const root = window.document.documentElement;
-              if (newProfile.theme === "light") {
-                root.classList.remove("dark");
-              } else {
-                root.classList.add("dark");
-              }
+              root.classList.add("dark");
+              root.setAttribute("data-theme", "dark");
             }
 
             return {
@@ -102,6 +113,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               onboardingCompleted: newProfile.onboarding_completed || false,
               plan: newProfile.plan || "starter",
               planExpiresAt: newProfile.plan_expires_at || null,
+              ghostModeConfig: newProfile.ghost_mode_config || null,
+              instagramProfilePictureUrl: newProfile.instagram_profile_picture_url || null,
             };
           }
         }
@@ -114,17 +127,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setInstagramConnected(data.instagram_connected || false);
         setInstagramHandle(data.instagram_handle || null);
         
-        // Sync theme immediately
+        // Always enforce dark mode
         if (typeof window !== "undefined") {
           const root = window.document.documentElement;
-          if (data.theme === "light") {
-            root.classList.remove("dark");
-          } else {
-            root.classList.add("dark");
-          }
+          root.classList.add("dark");
+          root.setAttribute("data-theme", "dark");
         }
 
-        return {
+        const profile = {
           id: data.id,
           name: data.name || authUserEmail.split("@")[0],
           email: data.email || authUserEmail,
@@ -135,7 +145,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           onboardingCompleted: data.onboarding_completed || false,
           plan: data.plan || "starter",
           planExpiresAt: data.plan_expires_at || null,
+          ghostModeConfig: data.ghost_mode_config || null,
+          instagramProfilePictureUrl: data.instagram_profile_picture_url || null,
         };
+        loadedUserIdRef.current = data.id;
+        return profile;
       }
     } catch (err) {
       console.error("Failed to sync profile:", err);
@@ -159,6 +173,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         const { data: { session } } = await supabase.auth.getSession();
         if (session && session.user && mounted) {
+          // Remember Me check: if user logged in without "remember me",
+          // sign them out when their browser session ends (sessionStorage is cleared on close)
+          const hasRememberMe = typeof window !== "undefined" && localStorage.getItem("Ghostal_remember_me") === "1";
+          const hasSessionFlag = typeof window !== "undefined" && sessionStorage.getItem("Ghostal_session_only") === "1";
+
+          if (!hasRememberMe && !hasSessionFlag) {
+            // Browser was closed with remember me unchecked — sign out silently
+            await supabase.auth.signOut();
+            if (mounted) setIsLoading(false);
+            return;
+          }
+
           try {
             const profile = await fetchProfile(session.user.id, session.user.email || "");
             if (profile && mounted) {
@@ -194,34 +220,48 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     getInitialSession();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
+      (event, session) => {
         if ((event === "SIGNED_IN" || event === "INITIAL_SESSION") && session?.user) {
-          try {
-            const profile = await fetchProfile(session.user.id, session.user.email || "");
-            if (profile && mounted) {
-              setUser(profile);
-            } else if (mounted) {
-              setUser({
-                id: session.user.id,
-                name: session.user.email?.split("@")[0] || "User",
-                email: session.user.email || "",
-                createdAt: session.user.created_at,
-              });
-            }
-          } catch (profileErr) {
-            console.error("Profile fetch in auth change error:", profileErr);
-            if (mounted) {
-              setUser({
-                id: session.user.id,
-                name: session.user.email?.split("@")[0] || "User",
-                email: session.user.email || "",
-                createdAt: session.user.created_at,
-              });
-            }
-          } finally {
+          // If this SIGNED_IN event is a re-auth for the SAME user already loaded
+          // (e.g. password change re-verification), skip the profile refetch.
+          // This prevents the DashboardLayout from flickering into a loading spinner.
+          if (event === "SIGNED_IN" && loadedUserIdRef.current === session.user.id) {
             clearTimeout(safetyTimer);
             if (mounted) setIsLoading(false);
+            return;
           }
+
+          // Defer the async profile fetch using setTimeout to prevent deadlocking the Supabase Auth client
+          setTimeout(async () => {
+            if (!mounted) return;
+            try {
+              const profile = await fetchProfile(session.user.id, session.user.email || "");
+              if (profile && mounted) {
+                setUser(profile);
+              } else if (mounted) {
+                setUser({
+                  id: session.user.id,
+                  name: session.user.email?.split("@")[0] || "User",
+                  email: session.user.email || "",
+                  createdAt: session.user.created_at,
+                });
+              }
+            } catch (profileErr) {
+              console.error("Profile fetch in auth change error:", profileErr);
+              if (mounted) {
+                setUser({
+                  id: session.user.id,
+                  name: session.user.email?.split("@")[0] || "User",
+                  email: session.user.email || "",
+                  createdAt: session.user.created_at,
+                });
+              }
+            } finally {
+              clearTimeout(safetyTimer);
+              if (mounted) setIsLoading(false);
+            }
+          }, 0);
+
         } else if (event === "SIGNED_OUT") {
           clearTimeout(safetyTimer);
           if (mounted) {
@@ -256,17 +296,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [fetchProfile]);
 
-  const login = useCallback(async (email: string, password: string) => {
+  const login = useCallback(async (email: string, password: string, rememberMe = false) => {
     if (!email || !password) {
       throw new Error("Email and password are required");
     }
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-    if (error) {
-      throw new Error(error.message);
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) throw new Error(error.message);
+
+    // Persist session preference
+    if (typeof window !== "undefined") {
+      if (rememberMe) {
+        localStorage.setItem("Ghostal_remember_me", "1");
+        sessionStorage.removeItem("Ghostal_session_only");
+      } else {
+        localStorage.removeItem("Ghostal_remember_me");
+        sessionStorage.setItem("Ghostal_session_only", "1");
+      }
     }
+
     router.refresh();
   }, [router]);
 
@@ -275,7 +322,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error("All fields are required");
     }
     const redirectToUrl = typeof window !== "undefined" 
-      ? `${window.location.origin}/auth/callback?next=/dashboard`
+      ? `${window.location.origin}/callback?next=/dashboard`
       : undefined;
 
     const { error } = await supabase.auth.signUp({
@@ -297,13 +344,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(async () => {
     try {
       const { error } = await supabase.auth.signOut();
-      if (error) {
-        console.error("Signout error:", error);
-      }
+      if (error) console.error("Signout error:", error);
     } catch (err) {
       console.error("Unhandled error during logout:", err);
     } finally {
-      // Force full reload and navigation to login to destroy any stale client-side router caches
+      if (typeof window !== "undefined") {
+        // Clear all cached data
+        localStorage.removeItem("Ghostal_vault_items");
+        localStorage.removeItem("Ghostal_scheduled_posts");
+        localStorage.removeItem("Ghostal_ghost_mode_config");
+        localStorage.removeItem("Ghostal_survival_logs");
+        // Clear remember me flag so next visit requires login
+        localStorage.removeItem("Ghostal_remember_me");
+        sessionStorage.removeItem("Ghostal_session_only");
+      }
       window.location.href = "/login";
     }
   }, []);
@@ -329,26 +383,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const disconnectInstagram = useCallback(async () => {
     if (!user) return;
-    const { error } = await supabase
-      .from("profiles")
-      .update({
-        instagram_connected: false,
-        instagram_handle: null,
-      })
-      .eq("id", user.id);
 
-    if (error) {
-      throw new Error(error.message);
+    // Use server-side route with service role key — bypasses RLS
+    const res = await fetch("/api/instagram/disconnect", { method: "POST" });
+    const data = await res.json();
+
+    if (!res.ok) {
+      console.error("[disconnectInstagram] API error:", data.error);
+      throw new Error(data.error || "Failed to disconnect Instagram.");
     }
 
     setInstagramConnected(false);
     setInstagramHandle(null);
     setUser(prev => prev ? { ...prev, instagramConnected: false, instagramHandle: null } : null);
+    localStorage.removeItem("Ghostal_vault_items");
+    localStorage.removeItem("Ghostal_scheduled_posts");
   }, [user]);
 
   const updateProfile = useCallback(async (name: string, email: string, avatarUrl?: string) => {
     if (!user) return;
-    const updateData: any = { name, email };
+    const updateData: { name: string; email: string; avatar_url?: string } = { name, email };
     if (avatarUrl !== undefined) {
       updateData.avatar_url = avatarUrl;
     }
@@ -361,24 +415,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error(error.message);
     }
 
-    setUser(prev => prev ? { 
-      ...prev, 
-      name, 
-      email, 
-      ...(avatarUrl !== undefined ? { avatar: avatarUrl } : {}) 
+    setUser(prev => prev ? {
+      ...prev,
+      name,
+      email,
+      ...(avatarUrl !== undefined ? { avatar: avatarUrl } : {})
     } : null);
   }, [user]);
 
   const completeOnboarding = useCallback(async (
-    niche: string, 
-    frequency: string, 
-    ghostMode: boolean, 
+    niche: string,
+    frequency: string,
+    ghostMode: boolean,
     triggerDays: number
   ) => {
     if (!user) return;
-    
-    // 1. Instantly update local client state to allow routing transition
-    setUser(prev => prev ? { ...prev, onboardingCompleted: true } : null);
 
     const onboardingData = {
       niche,
@@ -386,7 +437,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       ghostMode,
       triggerDays
     };
-    
+
     const updatedGhostConfig = {
       enabled: ghostMode,
       inactivityThresholdDays: triggerDays,
@@ -396,26 +447,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       preserveHashtags: true,
       notifyOnActivation: true,
     };
-    
-    // 2. Perform DB update asynchronously in background
-    (async () => {
-      try {
-        const { error } = await supabase
-          .from("profiles")
-          .update({
-            onboarding_completed: true,
-            onboarding_data: onboardingData,
-            ghost_mode_config: updatedGhostConfig
-          })
-          .eq("id", user.id);
-        
-        if (error) {
-          console.warn("Background onboarding save skipped or RLS restricted:", error.message);
-        }
-      } catch (err: any) {
-        console.warn("Unhandled onboarding DB exception:", err.message);
+
+    // Perform DB update FIRST, then update local state to keep them in sync
+    try {
+      const { error } = await supabase
+        .from("profiles")
+        .update({
+          onboarding_completed: true,
+          onboarding_data: onboardingData,
+          ghost_mode_config: updatedGhostConfig
+        })
+        .eq("id", user.id);
+
+      if (error) {
+        console.warn("Onboarding save failed:", error.message);
+        throw new Error(error.message);
       }
-    })();
+    } catch (err: any) {
+      console.error("Onboarding DB exception:", err.message);
+      throw err;
+    }
+
+    // Update local state only after successful DB write
+    setUser(prev => prev ? { ...prev, onboardingCompleted: true } : null);
+  }, [user]);
+
+  const updateGhostModeConfig = useCallback(async (newConfig: any) => {
+    if (!user) return;
+    setUser(prev => prev ? { ...prev, ghostModeConfig: newConfig } : null);
+    try {
+      await supabase
+        .from("profiles")
+        .update({ ghost_mode_config: newConfig })
+        .eq("id", user.id);
+    } catch (err) {
+      console.error("[useAuth] Error saving ghostModeConfig:", err);
+    }
   }, [user]);
 
   return (
@@ -433,6 +500,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         disconnectInstagram,
         updateProfile,
         completeOnboarding,
+        updateGhostModeConfig,
       }}
     >
       {children}

@@ -4,20 +4,22 @@ import { useRef } from "react";
 import { motion, useInView } from "framer-motion";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { InteractiveHoverButton } from "@/components/ui/interactive-hover-button";
 
 export default function FinalCTA() {
   const ref = useRef<HTMLElement>(null);
   const isInView = useInView(ref, { once: true, amount: 0.3 });
+  const router = useRouter();
 
   return (
     <section ref={ref} className="relative py-24 sm:py-32 px-4 sm:px-6 lg:px-8">
       <div className="relative mx-auto max-w-4xl">
         {/* Background blobs */}
         <div className="pointer-events-none absolute inset-0 overflow-hidden">
-          <div className="absolute -left-20 top-1/2 h-[400px] w-[400px] -translate-y-1/2 rounded-full bg-violet-600/20 animate-glow-pulse blur-[60px]" />
+          <div className="absolute -left-20 top-1/2 h-[400px] w-[400px] -translate-y-1/2 rounded-full bg-violet-600/20 blur-[60px]" />
           <div
-            className="absolute -right-20 top-1/2 h-[400px] w-[400px] -translate-y-1/2 rounded-full bg-cyan-500/15 animate-glow-pulse blur-[60px]"
-            style={{ animationDelay: "2s" }}
+            className="absolute -right-20 top-1/2 h-[400px] w-[400px] -translate-y-1/2 rounded-full bg-cyan-500/15 blur-[60px]"
           />
         </div>
 
@@ -63,14 +65,11 @@ export default function FinalCTA() {
             transition={{ duration: 0.6, delay: 0.5 }}
             className="relative z-10 mt-10"
           >
-            <Link
-              href="/signup"
-              className="group relative inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-cyan-500 px-8 py-4 text-base font-semibold text-white shadow-2xl shadow-violet-500/25 transition-all hover:shadow-violet-500/40 hover:brightness-110 sm:text-lg"
-            >
-              Start Building Your Backup System
-              <ArrowRight className="h-5 w-5 transition-transform group-hover:translate-x-1" />
-              <div className="absolute inset-0 rounded-xl bg-gradient-to-r from-violet-600 to-cyan-500 opacity-0 blur-xl transition-opacity group-hover:opacity-40" />
-            </Link>
+            <InteractiveHoverButton 
+              text="Start Building Your Backup System" 
+              onClick={() => router.push("/signup")}
+              className="w-80 bg-gradient-to-r from-violet-600 to-cyan-500 border-0 text-white sm:text-lg px-8 py-4 h-auto" 
+            />
           </motion.div>
         </motion.div>
       </div>

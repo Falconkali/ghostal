@@ -1,13 +1,14 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import { useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   User as UserIcon,
   Instagram,
   Bell,
   Brain,
-  CreditCard,
   Check,
   Shield,
   Loader2,
@@ -21,12 +22,21 @@ import {
   AlertTriangle,
   Sun,
   Moon,
+  Copy,
+  X,
+  CreditCard,
+  ExternalLink,
+  Crown,
+  Zap,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
 import { supabase } from "@/lib/supabase";
 import type { GhostModeConfig } from "@/types";
 
-export default function SettingsPage() {
+import { Suspense } from "react";
+
+function SettingsContent() {
   const { instagramConnected, instagramHandle, connectInstagram, disconnectInstagram, updateProfile, user } = useAuth();
 
   const [activeTab, setActiveTab] = useState<
@@ -35,10 +45,50 @@ export default function SettingsPage() {
 
   const [saving, setSaving] = useState(false);
   const [connecting, setConnecting] = useState(false);
-  const [upgrading, setUpgrading] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isLoadingProfile, setIsLoadingProfile] = useState(true);
+
+  const [billingData, setBillingData] = useState<{
+    plan: string;
+    subscription_status: string | null;
+    trial_ends_at: string | null;
+    paddle_subscription_id: string | null;
+    paddle_customer_id: string | null;
+    payment_provider: string | null;
+  }>({
+    plan: "starter",
+    subscription_status: null,
+    trial_ends_at: null,
+    paddle_subscription_id: null,
+    paddle_customer_id: null,
+    payment_provider: "paddle",
+  });
+  const [cancelingSub, setCancelingSub] = useState(false);
+  const [openingPortal, setOpeningPortal] = useState(false);
+
+  // Handle OAuth callback params (?success=instagram_connected or ?error=...)
+  const searchParams = useSearchParams();
+  const handledCallbackRef = useRef(false);
+  useEffect(() => {
+    if (handledCallbackRef.current) return;
+    const successParam = searchParams.get("success");
+    const errorParam = searchParams.get("error");
+    if (successParam === "instagram_connected") {
+      handledCallbackRef.current = true;
+      setActiveTab("instagram");
+      setSuccessMessage("Instagram account connected successfully! 🎉");
+      setTimeout(() => setSuccessMessage(null), 4000);
+      // Clean up the URL without a page reload
+      window.history.replaceState({}, "", "/settings");
+    } else if (errorParam) {
+      handledCallbackRef.current = true;
+      setActiveTab("instagram");
+      setErrorMessage(decodeURIComponent(errorParam));
+      setTimeout(() => setErrorMessage(null), 6000);
+      window.history.replaceState({}, "", "/settings");
+    }
+  }, [searchParams]);
 
   const [formData, setFormData] = useState({
     name: "",
@@ -56,13 +106,6 @@ export default function SettingsPage() {
     confirm: "",
   });
   const [passwordSaving, setPasswordSaving] = useState(false);
-
-  // Plan info from DB
-  const [planInfo, setPlanInfo] = useState({
-    name: "Starter",
-    price: "Free",
-    renewsAt: null as string | null,
-  });
 
   const [avatarUploading, setAvatarUploading] = useState(false);
   const [customHandle, setCustomHandle] = useState("");
@@ -84,6 +127,18 @@ export default function SettingsPage() {
   const [isMFAVerifying, setIsMFAVerifying] = useState(false);
   const [isMFADisabling, setIsMFADisabling] = useState(false);
 
+  // Modals state
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showDisableMFAModal, setShowDisableMFAModal] = useState(false);
+  const [updatingPref, setUpdatingPref] = useState<string | null>(null);
+
+  const handleCopySecret = async () => {
+    if (mfaEnrollData?.secret) {
+      await navigator.clipboard.writeText(mfaEnrollData.secret);
+      setSuccessMessage("Secret copied to clipboard!");
+      setTimeout(() => setSuccessMessage(null), 2000);
+    }
+  };
 
   const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -143,7 +198,7 @@ export default function SettingsPage() {
         try {
           const { data } = await supabase
             .from("profiles")
-            .select("ghost_mode_config, notification_preferences, theme, plan, plan_expires_at")
+            .select("ghost_mode_config, notification_preferences, theme, plan, subscription_status, trial_ends_at, paddle_subscription_id, paddle_customer_id, payment_provider")
             .eq("id", user.id)
             .single();
             
@@ -161,30 +216,21 @@ export default function SettingsPage() {
             if (data.notification_preferences) {
               setNotificationPrefs(data.notification_preferences as any);
             }
-            if (data.theme) {
-              setTheme(data.theme);
-              if (typeof window !== "undefined") {
-                const root = window.document.documentElement;
-                if (data.theme === "light") {
-                  root.classList.remove("dark");
-                } else {
-                  root.classList.add("dark");
-                }
-              }
+            if (data.plan) {
+              setBillingData({
+                plan: data.plan || "starter",
+                subscription_status: data.subscription_status || null,
+                trial_ends_at: data.trial_ends_at || null,
+                paddle_subscription_id: data.paddle_subscription_id || null,
+                paddle_customer_id: data.paddle_customer_id || null,
+                payment_provider: data.payment_provider || "paddle",
+              });
             }
-            // Load plan info
-            const planMap: Record<string, { name: string; price: string }> = {
-              starter: { name: "Starter", price: "Free" },
-              creator_pro: { name: "Creator Pro", price: "$29/mo" },
-              survival_ai: { name: "Survival AI", price: "$59/mo" },
-            };
-            const planKey = (data.plan || "starter") as string;
-            const planDetails = planMap[planKey] || planMap["starter"];
-            setPlanInfo({
-              name: planDetails.name,
-              price: planDetails.price,
-              renewsAt: data.plan_expires_at || null,
-            });
+            if (typeof window !== "undefined") {
+              const root = window.document.documentElement;
+              root.classList.add("dark");
+              root.setAttribute("data-theme", "dark");
+            }
           }
         } catch (err) {
           console.error("Failed to load settings configuration:", err);
@@ -286,6 +332,11 @@ export default function SettingsPage() {
     e.preventDefault();
     if (!user) return;
 
+    if (!passwordData.current) {
+      setErrorMessage("Please enter your current password.");
+      setTimeout(() => setErrorMessage(null), 4000);
+      return;
+    }
     if (passwordData.newPass.length < 8) {
       setErrorMessage("New password must be at least 8 characters.");
       setTimeout(() => setErrorMessage(null), 4000);
@@ -296,10 +347,25 @@ export default function SettingsPage() {
       setTimeout(() => setErrorMessage(null), 4000);
       return;
     }
+    if (passwordData.current === passwordData.newPass) {
+      setErrorMessage("New password must be different from your current password.");
+      setTimeout(() => setErrorMessage(null), 4000);
+      return;
+    }
 
     setPasswordSaving(true);
     setErrorMessage(null);
     try {
+      // Step 1: Re-authenticate with current password before allowing change
+      const { error: reAuthError } = await supabase.auth.signInWithPassword({
+        email: user.email,
+        password: passwordData.current,
+      });
+      if (reAuthError) {
+        throw new Error("Current password is incorrect.");
+      }
+
+      // Step 2: Update to new password
       const { error } = await supabase.auth.updateUser({
         password: passwordData.newPass,
       });
@@ -323,7 +389,7 @@ export default function SettingsPage() {
     try {
       const { data, error } = await supabase.auth.mfa.enroll({
         factorType: "totp",
-        issuer: "GhostFlow",
+        issuer: "Ghostal",
         friendlyName: user.email,
       });
       if (error) throw error;
@@ -384,10 +450,6 @@ export default function SettingsPage() {
 
   const handleDisableMFA = async () => {
     if (!user) return;
-    const confirmDisable = window.confirm(
-      "WARNING: Are you sure you want to disable Two-Factor Authentication? Your account will be significantly less secure."
-    );
-    if (!confirmDisable) return;
 
     setErrorMessage(null);
     setSuccessMessage(null);
@@ -406,6 +468,7 @@ export default function SettingsPage() {
       setSuccessMessage("Two-factor authentication successfully disabled.");
       setIsMFAEnabled(false);
       setMfaFactors([]);
+      setShowDisableMFAModal(false);
       await fetchMFAStatus();
       setTimeout(() => setSuccessMessage(null), 3000);
     } catch (err: any) {
@@ -437,10 +500,20 @@ export default function SettingsPage() {
       setConnecting(true);
       // Instagram Business Login — uses instagram.com/oauth/authorize with the Instagram App ID.
       // Redirect URI must be registered in Meta Developer > Use Cases > Business login settings.
-      const instagramAppId = process.env.NEXT_PUBLIC_INSTAGRAM_APP_ID || "871648842633489";
+      const instagramAppId = process.env.NEXT_PUBLIC_INSTAGRAM_APP_ID;
+      if (!instagramAppId) {
+        setErrorMessage("Instagram App ID is not configured. Please contact support.");
+        setConnecting(false);
+        return;
+      }
       const redirectUri = `${window.location.origin}/api/auth/instagram/callback`;
-      const scope = "instagram_business_basic,instagram_business_manage_comments,instagram_business_manage_messages,instagram_business_content_publish";
-      const oauthUrl = `https://www.instagram.com/oauth/authorize?client_id=${instagramAppId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${scope}&response_type=code`;
+      const scope = "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights";
+      // Generate a random state token for CSRF protection
+      const stateToken = Array.from(crypto.getRandomValues(new Uint8Array(16)))
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("");
+      sessionStorage.setItem("ig_oauth_state", stateToken);
+      const oauthUrl = `https://www.instagram.com/oauth/authorize?client_id=${instagramAppId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${scope}&response_type=code&state=${stateToken}`;
       
       window.location.href = oauthUrl;
     }
@@ -449,6 +522,7 @@ export default function SettingsPage() {
   // Toggle Notification Preference
   const toggleNotificationPref = async (key: "starvation" | "activation" | "report") => {
     if (!user) return;
+    setUpdatingPref(key);
     const updated = {
       ...notificationPrefs,
       [key]: !notificationPrefs[key],
@@ -470,65 +544,25 @@ export default function SettingsPage() {
       setTimeout(() => setErrorMessage(null), 3000);
       // Rollback UI
       setNotificationPrefs(notificationPrefs);
+    } finally {
+      setUpdatingPref(null);
     }
   };
 
-  // Toggle Dark/Light Theme
+  // Toggle Dark/Light Theme (Dark Mode Enforced)
   const toggleTheme = async () => {
     if (!user) return;
-    const newTheme = theme === "dark" ? "light" : "dark";
-    setTheme(newTheme);
-    
+    setTheme("dark");
     if (typeof window !== "undefined") {
       const root = window.document.documentElement;
-      if (newTheme === "light") {
-        root.classList.remove("dark");
-      } else {
-        root.classList.add("dark");
-      }
-    }
-    
-    try {
-      const { error } = await supabase
-        .from("profiles")
-        .update({ theme: newTheme })
-        .eq("id", user.id);
-      
-      if (error) throw error;
-      setSuccessMessage("Theme updated successfully!");
-      setTimeout(() => setSuccessMessage(null), 2000);
-    } catch (err: any) {
-      console.error("Error saving theme:", err);
-      setErrorMessage(err.message || "Failed to update theme.");
-      setTimeout(() => setErrorMessage(null), 3000);
-      // Rollback UI
-      setTheme(theme);
-      if (typeof window !== "undefined") {
-        const root = window.document.documentElement;
-        if (theme === "light") {
-          root.classList.remove("dark");
-        } else {
-          root.classList.add("dark");
-        }
-      }
+      root.classList.add("dark");
+      root.setAttribute("data-theme", "dark");
     }
   };
 
   // Handle Account Deletion
   const handleDeleteAccount = async () => {
     if (!user) return;
-    
-    const confirmDelete = window.confirm(
-      "WARNING: Are you absolutely sure you want to permanently delete your account? This will erase all your vault items, scheduled posts, AI survival profiles, and profile data completely. This cannot be undone."
-    );
-    
-    if (!confirmDelete) return;
-    
-    const finalConfirm = window.confirm(
-      "Final Confirmation: This will delete your authentication user from Supabase and perform a cascade wipe of all database assets. Click OK to proceed."
-    );
-    
-    if (!finalConfirm) return;
     
     setSaving(true);
     setErrorMessage(null);
@@ -545,6 +579,56 @@ export default function SettingsPage() {
       setErrorMessage(err.message || "Failed to delete account. Please try again.");
       setTimeout(() => setErrorMessage(null), 5000);
       setSaving(false);
+      setShowDeleteModal(false);
+    }
+  };
+
+  const handleCancelSubscription = async () => {
+    if (
+      !confirm(
+        "Are you sure you want to cancel your subscription? Your cancellation will take effect at the end of the current billing period, so you will keep your full access until then."
+      )
+    )
+      return;
+    setCancelingSub(true);
+    setErrorMessage(null);
+    try {
+      const res = await fetch("/api/paddle/cancel-subscription", {
+        method: "POST",
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to cancel subscription");
+      setSuccessMessage(data.message || "Subscription cancellation scheduled successfully.");
+      setBillingData((prev) => ({
+        ...prev,
+        subscription_status: "canceling",
+      }));
+      setTimeout(() => setSuccessMessage(null), 4000);
+    } catch (err: any) {
+      setErrorMessage(err.message || "Failed to cancel subscription.");
+      setTimeout(() => setErrorMessage(null), 5000);
+    } finally {
+      setCancelingSub(false);
+    }
+  };
+
+  const handleOpenCustomerPortal = async () => {
+    setOpeningPortal(true);
+    setErrorMessage(null);
+    try {
+      const res = await fetch("/api/paddle/portal-session", {
+        method: "POST",
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to open customer portal.");
+      if (data.url) {
+        window.open(data.url, "_blank");
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || "Failed to open customer portal.");
+      setTimeout(() => setErrorMessage(null), 5000);
+    } finally {
+      setOpeningPortal(false);
     }
   };
 
@@ -554,7 +638,7 @@ export default function SettingsPage() {
     { id: "notifications", label: "Notifications", icon: Bell },
     { id: "ai", label: "AI Survival", icon: Brain },
     { id: "security", label: "Security", icon: Lock },
-    { id: "billing", label: "Plan & Billing", icon: CreditCard },
+    { id: "billing", label: "Billing", icon: CreditCard },
   ] as const;
 
   return (
@@ -562,10 +646,10 @@ export default function SettingsPage() {
       {/* Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">
+          <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
             Settings
           </h1>
-          <p className="text-sm text-zinc-400">
+          <p className="text-sm text-muted-foreground">
             Manage your account credentials, platform links, integrations, and AI presets.
           </p>
         </div>
@@ -636,8 +720,8 @@ export default function SettingsPage() {
                 <>
                   <form onSubmit={handleSaveProfile} className="space-y-6">
                   <div>
-                    <h3 className="text-lg font-semibold text-white">Profile Details</h3>
-                    <p className="text-xs text-zinc-400">Update your avatar, display name, and email address.</p>
+                    <h3 className="text-lg font-semibold text-foreground">Profile Details</h3>
+                    <p className="text-xs text-muted-foreground">Update your avatar, display name, and email address.</p>
                   </div>
 
                   <div className="flex items-center gap-4">
@@ -733,17 +817,17 @@ export default function SettingsPage() {
                       Danger Zone
                     </h4>
                     <p className="text-xs text-zinc-400 mt-1">
-                      Permanently delete your GhostFlow account and erase all data. This action is irreversible.
+                      Permanently delete your Ghostal account and erase all data. This action is irreversible.
                     </p>
                   </div>
                   <div className="rounded-xl border border-red-500/10 bg-red-500/5 p-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                     <div>
-                      <h5 className="text-xs font-semibold text-white">Delete Account</h5>
+                      <h5 className="text-xs font-semibold text-foreground">Delete Account</h5>
                       <p className="text-[10px] text-zinc-400 mt-0.5">All scheduled posts, media files, and profiles will be deleted instantly.</p>
                     </div>
                     <button
                       type="button"
-                      onClick={handleDeleteAccount}
+                      onClick={() => setShowDeleteModal(true)}
                       disabled={saving}
                       className="rounded-lg bg-red-500/10 border border-red-500/20 px-3.5 py-2 text-xs font-semibold text-red-400 hover:bg-red-500/20 hover:text-red-300 transition-all cursor-pointer disabled:opacity-50"
                     >
@@ -754,21 +838,78 @@ export default function SettingsPage() {
               </>
             )}
 
+            {/* BILLING TAB */}
+            {activeTab === "billing" && (
+              <div className="space-y-6">
+                <div>
+                  <h3 className="text-lg font-semibold text-foreground">Billing &amp; Plan</h3>
+                  <p className="text-xs text-muted-foreground">Manage your subscription, plan limits, and payment details.</p>
+                </div>
+
+                <div className="rounded-xl border border-white/5 bg-white/5 p-6 space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div>
+                      <p className="text-xs text-muted-foreground">Current Plan</p>
+                      <h4 className="text-xl font-bold text-foreground capitalize mt-1">
+                        {billingData.plan === "starter" ? "Ghostal Starter" : billingData.plan === "creator_pro" ? "Creator Pro" : billingData.plan === "survival_ai" ? "Survival AI" : billingData.plan}
+                      </h4>
+                      {billingData.subscription_status === "ACTIVE" && (
+                        <span className="inline-flex items-center gap-1.5 mt-2 rounded-full bg-emerald-500/10 px-2.5 py-1 text-[10px] font-semibold text-emerald-400">
+                          <CheckCircle className="h-3 w-3" /> Active Subscription
+                        </span>
+                      )}
+                      {billingData.subscription_status === "CANCELLED" && (
+                        <span className="inline-flex items-center gap-1.5 mt-2 rounded-full bg-red-500/10 px-2.5 py-1 text-[10px] font-semibold text-red-400">
+                          <AlertTriangle className="h-3 w-3" /> Cancelled
+                        </span>
+                      )}
+                    </div>
+                    {billingData.plan === "starter" ? (
+                      <a href="/#pricing" className="rounded-lg bg-violet-600 px-4 py-2 text-xs font-semibold text-white hover:bg-violet-500 transition-all">
+                        Upgrade Plan
+                      </a>
+                    ) : (
+                      <button
+                        onClick={handleCancelSubscription}
+                        disabled={cancelingSub || billingData.subscription_status === "CANCELLED"}
+                        className="rounded-lg bg-red-500/10 border border-red-500/20 px-4 py-2 text-xs font-semibold text-red-400 hover:bg-red-500/20 hover:text-red-300 transition-all disabled:opacity-50 cursor-pointer"
+                      >
+                        {cancelingSub ? "Canceling..." : billingData.subscription_status === "CANCELLED" ? "Already Cancelled" : "Cancel Subscription"}
+                      </button>
+                    )}
+                  </div>
+
+                  {billingData.trial_ends_at && new Date(billingData.trial_ends_at) > new Date() && (
+                    <div className="mt-4 pt-4 border-t border-white/5">
+                      <p className="text-xs text-muted-foreground">
+                        Your free trial ends on <span className="font-semibold text-white">{new Date(billingData.trial_ends_at).toLocaleDateString()}</span>.
+                        You will not be charged before this date.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
               {/* INSTAGRAM TAB */}
               {activeTab === "instagram" && (
                 <div className="space-y-6">
                   <div>
-                    <h3 className="text-lg font-semibold text-white">Instagram Integration</h3>
-                    <p className="text-xs text-zinc-400">Configure connection to your Instagram Professional/Creator account.</p>
+                    <h3 className="text-lg font-semibold text-foreground">Instagram Integration</h3>
+                    <p className="text-xs text-muted-foreground">Configure connection to your Instagram Professional/Creator account.</p>
                   </div>
 
                   <div className="rounded-xl border border-white/5 bg-white/5 p-5 flex flex-col gap-5">
                     <div className="flex items-start sm:items-center gap-3">
-                      <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-pink-600/10 text-pink-400 border border-pink-500/10 shrink-0">
-                        <Instagram className="h-6 w-6" />
+                      <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-pink-600/10 text-pink-400 border border-pink-500/10 shrink-0 overflow-hidden">
+                        {instagramConnected && user?.instagramProfilePictureUrl ? (
+                          <img src={user.instagramProfilePictureUrl} alt="Instagram Profile" className="h-full w-full object-cover" />
+                        ) : (
+                          <Instagram className="h-6 w-6" />
+                        )}
                       </div>
                       <div>
-                        <h4 className="text-sm font-semibold text-white">
+                        <h4 className="text-sm font-semibold text-foreground">
                           {instagramConnected ? (instagramHandle || "@your_account") : "Instagram API Link"}
                         </h4>
                         <p className="text-xs text-zinc-400 mt-0.5">
@@ -839,8 +980,8 @@ export default function SettingsPage() {
               {activeTab === "notifications" && (
                 <div className="space-y-6">
                   <div>
-                    <h3 className="text-lg font-semibold text-white">Alert Preferences</h3>
-                    <p className="text-xs text-zinc-400">Configure how and when GhostFlow reaches you.</p>
+                    <h3 className="text-lg font-semibold text-foreground">Alert Preferences</h3>
+                    <p className="text-xs text-muted-foreground">Configure how and when Ghostal reaches you.</p>
                   </div>
 
                   <div className="space-y-4">
@@ -868,7 +1009,7 @@ export default function SettingsPage() {
                         <div className="flex gap-3">
                           <item.icon className="h-5 w-5 text-zinc-500 mt-0.5" />
                           <div>
-                            <h4 className="text-sm font-semibold text-white">{item.title}</h4>
+                            <h4 className="text-sm font-semibold text-foreground">{item.title}</h4>
                             <p className="text-xs text-zinc-400 mt-0.5">{item.desc}</p>
                           </div>
                         </div>
@@ -877,47 +1018,19 @@ export default function SettingsPage() {
                             type="checkbox"
                             checked={notificationPrefs[item.id]}
                             onChange={() => toggleNotificationPref(item.id)}
+                            disabled={updatingPref === item.id}
                             className="peer sr-only"
                           />
-                          <div className="peer h-5 w-9 rounded-full bg-white/5 border border-white/10 after:absolute after:top-[2px] after:left-[2px] after:h-4 after:w-4 after:rounded-full after:bg-zinc-400 after:transition-all after:content-[''] peer-checked:bg-violet-600 peer-checked:after:translate-x-full peer-checked:after:bg-white peer-focus:outline-none" />
+                          <div className={cn("peer h-5 w-9 rounded-full bg-white/5 border border-white/10 after:absolute after:top-[2px] after:left-[2px] after:h-4 after:w-4 after:rounded-full after:bg-zinc-400 after:transition-all after:content-[''] peer-checked:bg-violet-600 peer-checked:after:translate-x-full peer-checked:after:bg-white peer-focus:outline-none", updatingPref === item.id && "opacity-50")} />
+                          {updatingPref === item.id && (
+                            <Loader2 className="absolute -right-6 h-4 w-4 animate-spin text-violet-400" />
+                          )}
                         </label>
                       </div>
                     ))}
                   </div>
 
-                  {/* Appearance Section */}
-                  <div className="border-t border-white/5 pt-6 space-y-4">
-                    <div>
-                      <h3 className="text-sm font-semibold text-white">Appearance</h3>
-                      <p className="text-xs text-zinc-400">Choose between light and dark modes.</p>
-                    </div>
-                    <div className="flex gap-4">
-                      <button
-                        type="button"
-                        onClick={() => theme !== "light" && toggleTheme()}
-                        className={`flex flex-1 items-center justify-center gap-2.5 rounded-xl border p-4 text-sm font-medium transition-all cursor-pointer ${
-                          theme === "light"
-                            ? "bg-white/10 border-violet-500/30 text-white shadow-[0_0_15px_rgba(139,92,246,0.15)] font-semibold"
-                            : "bg-white/5 border-white/5 text-zinc-400 hover:bg-white/10 hover:text-white"
-                        }`}
-                      >
-                        <Sun className="h-4.5 w-4.5 text-amber-400" />
-                        Light Mode
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => theme !== "dark" && toggleTheme()}
-                        className={`flex flex-1 items-center justify-center gap-2.5 rounded-xl border p-4 text-sm font-medium transition-all cursor-pointer ${
-                          theme === "dark"
-                            ? "bg-white/10 border-violet-500/30 text-white shadow-[0_0_15px_rgba(139,92,246,0.15)] font-semibold"
-                            : "bg-white/5 border-white/5 text-zinc-400 hover:bg-white/10 hover:text-white"
-                        }`}
-                      >
-                        <Moon className="h-4.5 w-4.5 text-violet-400" />
-                        Dark Mode
-                      </button>
-                    </div>
-                  </div>
+
                 </div>
               )}
 
@@ -927,8 +1040,8 @@ export default function SettingsPage() {
                   {/* Change Password */}
                   <form onSubmit={handleChangePassword} className="space-y-6">
                     <div>
-                      <h3 className="text-lg font-semibold text-white">Change Password</h3>
-                      <p className="text-xs text-zinc-400">Update your account password. Must be at least 8 characters.</p>
+                      <h3 className="text-lg font-semibold text-foreground">Change Password</h3>
+                      <p className="text-xs text-muted-foreground">Update your account password. Must be at least 8 characters.</p>
                     </div>
 
                     <div className="space-y-4">
@@ -1003,8 +1116,8 @@ export default function SettingsPage() {
                   {/* Two-Factor Authentication */}
                   <div className="pt-8 space-y-6">
                     <div>
-                      <h3 className="text-lg font-semibold text-white">Two-Factor Authentication (2FA)</h3>
-                      <p className="text-xs text-zinc-400">Secure your GhostFlow creator account with an authenticator app (TOTP).</p>
+                      <h3 className="text-lg font-semibold text-foreground">Two-Factor Authentication (2FA)</h3>
+                      <p className="text-xs text-muted-foreground">Secure your Ghostal creator account with an authenticator app (TOTP).</p>
                     </div>
 
                     {isLoadingMFA ? (
@@ -1019,7 +1132,7 @@ export default function SettingsPage() {
                             <Shield className="h-5 w-5" />
                           </div>
                           <div>
-                            <h4 className="text-sm font-bold text-white">2FA is enabled and active</h4>
+                            <h4 className="text-sm font-bold text-foreground">2FA is enabled and active</h4>
                             <p className="text-xs text-zinc-400 leading-relaxed mt-1">
                               Your account is guarded with Time-Based One-Time Password (TOTP) codes. Every login attempt must be verified.
                             </p>
@@ -1028,18 +1141,11 @@ export default function SettingsPage() {
                         <div className="flex justify-end border-t border-white/5 pt-4">
                           <button
                             type="button"
-                            onClick={handleDisableMFA}
+                            onClick={() => setShowDisableMFAModal(true)}
                             disabled={isMFADisabling}
                             className="flex items-center gap-2 rounded-lg bg-red-600/15 border border-red-500/10 px-4 py-2 text-xs font-semibold text-red-400 hover:bg-red-600/25 transition-all disabled:opacity-50 cursor-pointer"
                           >
-                            {isMFADisabling ? (
-                              <>
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                Disabling...
-                              </>
-                            ) : (
-                              "Disable Two-Factor Authentication"
-                            )}
+                            Disable Two-Factor Authentication
                           </button>
                         </div>
                       </div>
@@ -1064,15 +1170,20 @@ export default function SettingsPage() {
                           
                           <div className="md:col-span-3 space-y-4">
                             <div className="space-y-1">
-                              <h4 className="text-sm font-semibold text-white">Scan this QR Code</h4>
+                              <h4 className="text-sm font-semibold text-foreground">Scan this QR Code</h4>
                               <p className="text-xs text-zinc-400 leading-relaxed">
                                 Open your authenticator app (Google Authenticator, Duo, or Microsoft Authenticator) and scan the QR code to connect your profile.
                               </p>
                             </div>
 
-                            <div className="space-y-1.5 rounded-lg border border-white/5 bg-white/[0.02] p-3">
-                              <span className="text-[10px] font-semibold text-zinc-500 block uppercase tracking-wider">Fallback Secret Key</span>
-                              <code className="text-xs font-mono text-violet-300 break-all select-all font-bold block">{mfaEnrollData.secret}</code>
+                            <div className="space-y-1.5 rounded-lg border border-white/5 bg-white/[0.02] p-3 flex justify-between items-center group">
+                              <div>
+                                <span className="text-[10px] font-semibold text-zinc-500 block uppercase tracking-wider">Fallback Secret Key</span>
+                                <code className="text-xs font-mono text-violet-300 break-all select-all font-bold block">{mfaEnrollData.secret}</code>
+                              </div>
+                              <button type="button" onClick={handleCopySecret} className="p-2 rounded-lg bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-white/10 text-zinc-400 hover:text-white" title="Copy Secret">
+                                <Copy className="h-4 w-4" />
+                              </button>
                             </div>
                           </div>
                         </div>
@@ -1127,7 +1238,7 @@ export default function SettingsPage() {
                             <Smartphone className="h-5 w-5" />
                           </div>
                           <div>
-                            <h4 className="text-sm font-bold text-white">2FA is currently disabled</h4>
+                            <h4 className="text-sm font-bold text-foreground">2FA is currently disabled</h4>
                             <p className="text-xs text-zinc-400 leading-relaxed mt-1">
                               Guard your assets and survival timers with a secondary verification passcode layer. Requires an authenticator device app.
                             </p>
@@ -1153,8 +1264,8 @@ export default function SettingsPage() {
               {activeTab === "ai" && (
                 <form onSubmit={handleSaveAIConfig} className="space-y-6">
                   <div>
-                    <h3 className="text-lg font-semibold text-white">AI Engine Configuration</h3>
-                    <p className="text-xs text-zinc-400">Customize the fallback strategy when queue empties.</p>
+                    <h3 className="text-lg font-semibold text-foreground">AI Engine Configuration</h3>
+                    <p className="text-xs text-muted-foreground">Customize the fallback strategy when queue empties.</p>
                   </div>
 
                   <div className="space-y-4">
@@ -1177,32 +1288,56 @@ export default function SettingsPage() {
                     <div className="space-y-2">
                       <div className="flex justify-between text-xs font-semibold text-zinc-400">
                         <span>Inactivity Threshold</span>
-                        <span className="text-violet-400 font-bold">{formData.inactivityThreshold} Days</span>
                       </div>
-                      <input
-                        type="range"
-                        min="1"
-                        max="14"
-                        value={formData.inactivityThreshold}
-                        onChange={(e) => setFormData({ ...formData, inactivityThreshold: parseInt(e.target.value) })}
-                        className="w-full h-1.5 rounded-lg bg-white/5 accent-violet-600 cursor-pointer"
-                      />
+                      <div className="flex gap-4 items-center">
+                        <input
+                          type="range"
+                          min="1"
+                          max="14"
+                          value={formData.inactivityThreshold}
+                          onChange={(e) => setFormData({ ...formData, inactivityThreshold: parseInt(e.target.value) })}
+                          className="w-full h-1.5 rounded-lg bg-white/5 accent-violet-600 cursor-pointer"
+                        />
+                        <div className="flex items-center gap-1.5 rounded-lg border border-white/5 bg-white/5 px-3 py-1">
+                          <input 
+                            type="number"
+                            min="1"
+                            max="14"
+                            value={formData.inactivityThreshold}
+                            onChange={(e) => setFormData({ ...formData, inactivityThreshold: parseInt(e.target.value) || 1 })}
+                            className="w-8 bg-transparent text-sm font-bold text-violet-400 outline-none text-right"
+                          />
+                          <span className="text-xs text-zinc-500 font-medium">Days</span>
+                        </div>
+                      </div>
                       <p className="text-[10px] text-zinc-500">Wait length after last post before Ghost Mode takes over.</p>
                     </div>
 
                     <div className="space-y-2">
                       <div className="flex justify-between text-xs font-semibold text-zinc-400">
                         <span>Max Survival Posts per Week</span>
-                        <span className="text-violet-400 font-bold">{formData.maxPosts} Posts</span>
                       </div>
-                      <input
-                        type="range"
-                        min="1"
-                        max="10"
-                        value={formData.maxPosts}
-                        onChange={(e) => setFormData({ ...formData, maxPosts: parseInt(e.target.value) })}
-                        className="w-full h-1.5 rounded-lg bg-white/5 accent-violet-600 cursor-pointer"
-                      />
+                      <div className="flex gap-4 items-center">
+                        <input
+                          type="range"
+                          min="1"
+                          max="30"
+                          value={formData.maxPosts}
+                          onChange={(e) => setFormData({ ...formData, maxPosts: parseInt(e.target.value) })}
+                          className="w-full h-1.5 rounded-lg bg-white/5 accent-violet-600 cursor-pointer"
+                        />
+                        <div className="flex items-center gap-1.5 rounded-lg border border-white/5 bg-white/5 px-3 py-1">
+                          <input 
+                            type="number"
+                            min="1"
+                            max="30"
+                            value={formData.maxPosts}
+                            onChange={(e) => setFormData({ ...formData, maxPosts: parseInt(e.target.value) || 1 })}
+                            className="w-8 bg-transparent text-sm font-bold text-violet-400 outline-none text-right"
+                          />
+                          <span className="text-xs text-zinc-500 font-medium">Posts</span>
+                        </div>
+                      </div>
                     </div>
                   </div>
 
@@ -1218,104 +1353,169 @@ export default function SettingsPage() {
                 </form>
               )}
 
-              {/* BILLING TAB */}
+              {/* BILLING & SUBSCRIPTIONS TAB */}
               {activeTab === "billing" && (
                 <div className="space-y-6">
                   <div>
-                    <h3 className="text-lg font-semibold text-white">Plan Overview</h3>
-                    <p className="text-xs text-zinc-400">Manage your subscription and view usage limits.</p>
+                    <h3 className="text-lg font-semibold text-foreground flex items-center gap-2">
+                      <CreditCard className="h-5 w-5 text-violet-400" />
+                      Billing & Subscription
+                    </h3>
+                    <p className="text-xs text-muted-foreground">
+                      Manage your plan, open your Paddle customer portal, or update payment details.
+                    </p>
                   </div>
 
-                  {/* Current Plan */}
-                  <div className="rounded-xl border border-violet-500/20 bg-violet-500/5 p-5 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <span className="inline-block rounded-full bg-violet-600/20 px-2 py-0.5 text-[10px] font-semibold text-violet-400 uppercase">
-                        Current Plan
-                      </span>
-                      {isLoadingProfile ? (
-                        <div className="mt-2 space-y-2">
-                          <div className="h-6 w-32 rounded bg-white/5 animate-pulse" />
-                          <div className="h-4 w-48 rounded bg-white/5 animate-pulse" />
-                        </div>
-                      ) : (
-                        <>
-                          <h4 className="text-lg font-bold text-white mt-1">{planInfo.name}</h4>
-                          <p className="text-xs text-zinc-400">
-                            {planInfo.price === "Free" ? "Free plan" : `${planInfo.price}`}
-                            {planInfo.renewsAt
-                              ? ` · renews ${new Date(planInfo.renewsAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`
-                              : ""}
-                          </p>
-                        </>
-                      )}
-                    </div>
-                    {planInfo.name !== "Survival AI" && (
-                      <div className="flex flex-col gap-2 items-start sm:items-end">
-                        <button
-                          id="billing-upgrade-btn"
-                          disabled={upgrading}
-                          onClick={async () => {
-                            setUpgrading(true);
-                            setErrorMessage(null);
-                            try {
-                              if (!user) throw new Error("User session not found.");
-                              const targetPlan = planInfo.name === "Starter" ? "creator_pro" : "survival_ai";
-                              const { error } = await supabase
-                                .from("profiles")
-                                .update({ plan: targetPlan })
-                                .eq("id", user.id);
-                              if (error) throw error;
-                              setPlanInfo({
-                                name: targetPlan === "creator_pro" ? "Creator Pro" : "Survival AI",
-                                price: targetPlan === "creator_pro" ? "$29/mo" : "$59/mo",
-                                renewsAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-                              });
-                              setSuccessMessage(`Successfully upgraded to ${targetPlan === "creator_pro" ? "Creator Pro" : "Survival AI"} (Sandbox Mode)!`);
-                              setTimeout(() => setSuccessMessage(null), 4000);
-                            } catch (err: any) {
-                              setErrorMessage(err.message || "Could not upgrade plan. Please try again.");
-                              setTimeout(() => setErrorMessage(null), 6000);
-                            } finally {
-                              setUpgrading(false);
-                            }
-                          }}
-                          className="flex items-center gap-2 rounded-lg bg-gradient-to-r from-violet-600 to-cyan-500 px-4 py-2 text-xs font-semibold text-white hover:opacity-90 transition-all cursor-pointer shadow-lg shadow-violet-500/20 disabled:opacity-60"
-                        >
-                          {upgrading ? (
-                            <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Redirecting...</>
+                  {/* Plan Overview Card */}
+                  <div className="rounded-2xl border border-white/5 bg-[#12121a]/80 p-6 space-y-5">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                      <div className="space-y-1">
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">
+                          Current Plan
+                        </span>
+                        <h4 className="text-xl font-extrabold text-white flex items-center gap-2.5">
+                          {billingData.plan === "lifetime" ? (
+                            <>
+                              <Crown className="h-5 w-5 text-amber-400" />
+                              Founding Member (Lifetime)
+                            </>
+                          ) : billingData.plan === "survival_ai" ? (
+                            <>
+                              <Sparkles className="h-5 w-5 text-cyan-400" />
+                              Survival AI
+                            </>
+                          ) : billingData.plan === "creator_pro" ? (
+                            <>
+                              <Zap className="h-5 w-5 text-violet-400" />
+                              Creator Pro
+                            </>
+                          ) : billingData.plan === "starter" ? (
+                            "Starter"
                           ) : (
-                            planInfo.name === "Starter" ? "Upgrade to Creator Pro" : "Upgrade to Survival AI"
+                            "Free Plan"
                           )}
-                        </button>
-                        <p className="text-[10px] text-zinc-500">No commitment · cancel anytime</p>
+                        </h4>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        {billingData.plan === "lifetime" ? (
+                          <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 px-3.5 py-1 text-xs font-bold text-amber-400">
+                            <Crown className="h-3.5 w-3.5" /> Lifetime Access
+                          </span>
+                        ) : billingData.subscription_status === "canceling" ? (
+                          <span className="inline-flex items-center gap-1.5 rounded-full border border-orange-500/30 bg-orange-500/10 px-3.5 py-1 text-xs font-bold text-orange-400">
+                            Canceling at Period End
+                          </span>
+                        ) : billingData.plan !== "free" ? (
+                          <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3.5 py-1 text-xs font-bold text-emerald-400">
+                            <CheckCircle className="h-3.5 w-3.5" /> Active Subscription
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 rounded-full border border-zinc-700 bg-zinc-800 px-3.5 py-1 text-xs font-bold text-zinc-400">
+                            Free Tier
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="h-px w-full bg-white/5" />
+
+                    {/* Billing Provider Details */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                      <div className="rounded-xl border border-white/5 bg-white/[0.02] p-3.5 space-y-1">
+                        <span className="text-[10px] uppercase font-bold tracking-wider text-zinc-500">
+                          Payment Provider
+                        </span>
+                        <p className="font-semibold text-white flex items-center gap-1.5">
+                          <Shield className="h-3.5 w-3.5 text-violet-400" />
+                          Paddle (Merchant of Record)
+                        </p>
+                        <p className="text-[11px] text-zinc-500">
+                          Invoices and card transactions are processed securely by Paddle.
+                        </p>
+                      </div>
+
+                      <div className="rounded-xl border border-white/5 bg-white/[0.02] p-3.5 space-y-1">
+                        <span className="text-[10px] uppercase font-bold tracking-wider text-zinc-500">
+                          Subscription Reference
+                        </span>
+                        <p className="font-mono text-zinc-300 font-medium">
+                          {billingData.paddle_subscription_id ||
+                            (billingData.plan === "lifetime"
+                              ? "One-time Purchase"
+                              : "No recurring subscription")}
+                        </p>
+                        <p className="text-[11px] text-zinc-500">
+                          {billingData.paddle_customer_id
+                            ? `Customer ID: ${billingData.paddle_customer_id}`
+                            : "Billing ID assigned upon checkout."}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Lifetime Notice */}
+                    {billingData.plan === "lifetime" && (
+                      <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.03] p-4 flex items-start gap-3">
+                        <Crown className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" />
+                        <div className="space-y-1">
+                          <p className="text-xs font-bold text-white">
+                            Founding Member Status
+                          </p>
+                          <p className="text-[11px] text-zinc-400 leading-relaxed">
+                            You unlocked lifetime access to Ghostal. You have unlimited vault access, Ghost Mode Autopilot, and all upcoming features without any recurring renewal fees.
+                          </p>
+                        </div>
                       </div>
                     )}
-                  </div>
 
-                  {/* Plan Feature Comparison */}
-                  <div className="space-y-3">
-                    <h4 className="text-sm font-semibold text-white">What&apos;s Included</h4>
-                    <div className="rounded-xl border border-white/5 divide-y divide-white/5">
-                      {[
-                        { feature: "Content Vault", starter: "50 assets", pro: "500 assets", ai: "Unlimited" },
-                        { feature: "Scheduled Posts", starter: "10/month", pro: "Unlimited", ai: "Unlimited" },
-                        { feature: "Ghost Mode", starter: "—", pro: "✓", ai: "✓ Advanced" },
-                        { feature: "AI Survival Refill", starter: "—", pro: "Basic", ai: "Full Autopilot" },
-                        { feature: "Analytics", starter: "7 days", pro: "90 days", ai: "Full history" },
-                      ].map((row, idx) => (
-                        <div key={idx} className="grid grid-cols-4 px-4 py-3 text-xs">
-                          <span className="font-medium text-zinc-300">{row.feature}</span>
-                          <span className={planInfo.name === "Starter" ? "text-white font-semibold" : "text-zinc-500"}>{row.starter}</span>
-                          <span className={planInfo.name === "Creator Pro" ? "text-violet-400 font-semibold" : "text-zinc-500"}>{row.pro}</span>
-                          <span className={planInfo.name === "Survival AI" ? "text-cyan-400 font-semibold" : "text-zinc-500"}>{row.ai}</span>
-                        </div>
-                      ))}
-                      <div className="grid grid-cols-4 px-4 py-2 text-[10px] text-zinc-600 bg-white/[0.01]">
-                        <span />
-                        <span className={planInfo.name === "Starter" ? "text-violet-400 font-bold" : ""}>Starter</span>
-                        <span className={planInfo.name === "Creator Pro" ? "text-violet-400 font-bold" : ""}>Creator Pro</span>
-                        <span className={planInfo.name === "Survival AI" ? "text-cyan-400 font-bold" : ""}>Survival AI</span>
+                    {/* Actions Row */}
+                    <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+                      <div className="flex flex-wrap items-center gap-2.5">
+                        {/* Customer Portal Button */}
+                        <button
+                          type="button"
+                          onClick={handleOpenCustomerPortal}
+                          disabled={openingPortal}
+                          className="flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2.5 text-xs font-bold text-white shadow-lg shadow-violet-600/20 hover:bg-violet-500 transition-all hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50 cursor-pointer"
+                        >
+                          {openingPortal ? (
+                            <>
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              Opening Portal...
+                            </>
+                          ) : (
+                            <>
+                              <ExternalLink className="h-3.5 w-3.5" />
+                              Open Customer Portal
+                            </>
+                          )}
+                        </button>
+
+                        {/* Upgrade Plan Button */}
+                        {billingData.plan !== "lifetime" && billingData.plan !== "survival_ai" && (
+                          <Link
+                            href="/pricing"
+                            className="flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-xs font-semibold text-zinc-200 hover:bg-white/10 hover:text-white transition-all cursor-pointer"
+                          >
+                            <Zap className="h-3.5 w-3.5 text-amber-400" />
+                            Change Plan
+                          </Link>
+                        )}
                       </div>
+
+                      {/* Cancel Subscription Button */}
+                      {billingData.plan !== "free" &&
+                        billingData.plan !== "lifetime" &&
+                        billingData.subscription_status !== "canceling" && (
+                          <button
+                            type="button"
+                            onClick={handleCancelSubscription}
+                            disabled={cancelingSub}
+                            className="text-xs font-semibold text-red-400/80 hover:text-red-300 transition-colors cursor-pointer py-2 px-1 disabled:opacity-50"
+                          >
+                            {cancelingSub ? "Canceling..." : "Cancel Subscription"}
+                          </button>
+                        )}
                     </div>
                   </div>
                 </div>
@@ -1324,6 +1524,66 @@ export default function SettingsPage() {
           </AnimatePresence>
         </div>
       </div>
+      {/* Modals */}
+      <AnimatePresence>
+        {showDeleteModal && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+            <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} exit={{ scale: 0.95 }} className="w-full max-w-md rounded-2xl border border-red-500/20 bg-[#0d0c18] p-6 shadow-2xl">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-red-500/10 text-red-400">
+                  <AlertTriangle className="h-5 w-5" />
+                </div>
+                <button onClick={() => setShowDeleteModal(false)} className="text-zinc-500 hover:text-white transition-colors cursor-pointer">
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              <h3 className="text-lg font-bold text-foreground mb-2">Delete Account</h3>
+              <p className="text-sm text-zinc-400 mb-6 leading-relaxed">
+                This will permanently delete your authentication user and perform a cascade wipe of all database assets. This action cannot be undone. Are you absolutely sure?
+              </p>
+              <div className="flex justify-end gap-3">
+                <button onClick={() => setShowDeleteModal(false)} disabled={saving} className="px-4 py-2 rounded-lg text-sm font-semibold text-zinc-300 hover:text-white hover:bg-white/5 transition-colors disabled:opacity-50 cursor-pointer">Cancel</button>
+                <button onClick={handleDeleteAccount} disabled={saving} className="flex items-center gap-2 px-4 py-2 rounded-lg bg-red-500 text-sm font-semibold text-white hover:bg-red-600 transition-colors disabled:opacity-50 cursor-pointer">
+                  {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Yes, Delete Account"}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+
+        {showDisableMFAModal && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+            <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} exit={{ scale: 0.95 }} className="w-full max-w-md rounded-2xl border border-red-500/20 bg-[#0d0c18] p-6 shadow-2xl">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-red-500/10 text-red-400">
+                  <Shield className="h-5 w-5" />
+                </div>
+                <button onClick={() => setShowDisableMFAModal(false)} className="text-zinc-500 hover:text-white transition-colors cursor-pointer">
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              <h3 className="text-lg font-bold text-foreground mb-2">Disable 2FA</h3>
+              <p className="text-sm text-zinc-400 mb-6 leading-relaxed">
+                Are you sure you want to disable Two-Factor Authentication? Your account will be significantly less secure without a secondary verification passcode layer.
+              </p>
+              <div className="flex justify-end gap-3">
+                <button onClick={() => setShowDisableMFAModal(false)} disabled={isMFADisabling} className="px-4 py-2 rounded-lg text-sm font-semibold text-zinc-300 hover:text-white hover:bg-white/5 transition-colors disabled:opacity-50 cursor-pointer">Cancel</button>
+                <button onClick={handleDisableMFA} disabled={isMFADisabling} className="flex items-center gap-2 px-4 py-2 rounded-lg bg-red-500 text-sm font-semibold text-white hover:bg-red-600 transition-colors disabled:opacity-50 cursor-pointer">
+                  {isMFADisabling ? <Loader2 className="h-4 w-4 animate-spin" /> : "Disable 2FA"}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
+  );
+}
+
+export default function SettingsPage() {
+  return (
+    <Suspense fallback={<div className="flex h-[50vh] items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-violet-500" /></div>}>
+      <SettingsContent />
+    </Suspense>
   );
 }

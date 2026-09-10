@@ -44,8 +44,8 @@ export default function ContactPage() {
                 <p className="text-sm text-white/50 leading-relaxed mb-2">
                   Need help with your account, scheduling, or content vault?
                 </p>
-                <a id="support-email" href="mailto:support@ghostflow.ai" className="text-sm font-semibold text-violet-400 hover:text-violet-300">
-                  support@ghostflow.ai
+                <a id="support-email" href="mailto:support@ghostal.xyz" className="text-sm font-semibold text-violet-400 hover:text-violet-300">
+                  support@ghostal.xyz
                 </a>
               </div>
             </div>

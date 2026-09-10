@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useMemo } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useMemo, useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import {
@@ -11,9 +11,6 @@ import {
   Eye,
   EyeOff,
   Loader2,
-  Chrome,
-  Apple,
-  Twitter,
   ShieldCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -50,8 +47,18 @@ export default function SignupPage() {
   const [agreeTerms, setAgreeTerms] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
+  const [isSignedUp, setIsSignedUp] = useState(false);
 
   const strength = useMemo(() => getPasswordStrength(password), [password]);
+  const searchParams = useSearchParams();
+
+  // Capture referral code from URL (?ref=CODE) and persist in localStorage
+  useEffect(() => {
+    const ref = searchParams.get("ref");
+    if (ref) {
+      localStorage.setItem("pending_referral", ref);
+    }
+  }, [searchParams]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -77,8 +84,44 @@ export default function SignupPage() {
     setIsLoading(true);
     try {
       await signup(fullName, email, password);
-      // Wait for session sync or push directly
-      router.push("/dashboard");
+
+      // After signup, save referred_by if a referral code is stored
+      const pendingRef = localStorage.getItem("pending_referral");
+      if (pendingRef) {
+        try {
+          // Resolve referral code → referrer profile id
+          const { data: referrerProfile } = await supabase
+            .from("profiles")
+            .select("id")
+            .eq("referral_code", pendingRef)
+            .maybeSingle();
+
+          if (referrerProfile?.id) {
+            // Get the newly signed-up user's session
+            const { data: { session } } = await supabase.auth.getSession();
+            if (session?.user?.id) {
+              // Update profiles: set referred_by + create a referral row
+              await supabase
+                .from("profiles")
+                .update({ referred_by: referrerProfile.id })
+                .eq("id", session.user.id);
+
+              await supabase.from("referrals").insert({
+                referrer_id: referrerProfile.id,
+                referred_id: session.user.id,
+                referred_email: email,
+                status: "pending",
+              });
+            }
+          }
+        } catch (refErr) {
+          console.warn("Referral attribution failed (non-blocking):", refErr);
+        } finally {
+          localStorage.removeItem("pending_referral");
+        }
+      }
+
+      setIsSignedUp(true);
     } catch (err: any) {
       setError(err.message || "Something went wrong. Please try again.");
     } finally {
@@ -87,20 +130,7 @@ export default function SignupPage() {
   };
 
   const handleSocialSignup = async (provider: string) => {
-    setIsLoading(true);
-    setError("");
-    try {
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: provider.toLowerCase() as any,
-        options: {
-          redirectTo: `${window.location.origin}/callback`,
-        },
-      });
-      if (error) throw error;
-    } catch (err: any) {
-      setError(err.message || `Failed to sign up with ${provider}`);
-      setIsLoading(false);
-    }
+    setError(`${provider} signup is coming soon. Please use email and password for now.`);
   };
 
   const containerVariants = {
@@ -124,6 +154,40 @@ export default function SignupPage() {
       transition: { duration: 0.4, ease: "easeOut" as const },
     },
   };
+
+  if (isSignedUp) {
+    return (
+      <motion.div
+        variants={containerVariants}
+        initial="hidden"
+        animate="visible"
+        className="glass-strong glow-violet rounded-2xl p-8 text-center"
+      >
+        <motion.div variants={itemVariants} className="mb-6 flex flex-col items-center">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-400 mb-4 border border-emerald-500/20">
+            <Mail className="h-6 w-6" />
+          </div>
+          <h1 className="text-2xl font-bold text-white">Check your email</h1>
+          <p className="mt-2 text-sm text-white/70 leading-relaxed max-w-sm">
+            We sent a verification link to <span className="text-violet-400 font-semibold">{email}</span>.
+            Please confirm your email address to activate your account.
+          </p>
+        </motion.div>
+        
+        <motion.div variants={itemVariants} className="mt-6">
+          <Link
+            href="/login"
+            className={cn(
+              "inline-block w-full rounded-lg bg-gradient-to-r from-violet-600 to-cyan-500 py-2.5 text-sm font-semibold text-white",
+              "transition-all duration-300 hover:shadow-lg hover:shadow-violet-500/25 focus:outline-none"
+            )}
+          >
+            Back to Sign In
+          </Link>
+        </motion.div>
+      </motion.div>
+    );
+  }
 
   return (
     <motion.div
@@ -359,13 +423,13 @@ export default function SignupPage() {
             </div>
             <span className="text-sm text-white/50">
               I agree to the{" "}
-              <span className="text-violet-400 hover:text-violet-300 cursor-pointer">
+              <Link href="/terms" className="text-violet-400 hover:text-violet-300">
                 Terms of Service
-              </span>{" "}
+              </Link>{" "}
               and{" "}
-              <span className="text-violet-400 hover:text-violet-300 cursor-pointer">
+              <Link href="/privacy" className="text-violet-400 hover:text-violet-300">
                 Privacy Policy
-              </span>
+              </Link>
             </span>
           </label>
         </motion.div>
@@ -394,40 +458,7 @@ export default function SignupPage() {
         </motion.div>
       </form>
 
-      {/* Divider */}
-      <motion.div
-        variants={itemVariants}
-        className="my-6 flex items-center gap-3"
-      >
-        <div className="h-px flex-1 bg-white/10" />
-        <span className="text-xs text-white/30">or sign up with</span>
-        <div className="h-px flex-1 bg-white/10" />
-      </motion.div>
 
-      {/* Social buttons */}
-      <motion.div variants={itemVariants} className="grid grid-cols-3 gap-3">
-        {[
-          { icon: Chrome, label: "Google" },
-          { icon: Apple, label: "Apple" },
-          { icon: Twitter, label: "Twitter" },
-        ].map(({ icon: Icon, label }) => (
-          <button
-            key={label}
-            type="button"
-            onClick={() => handleSocialSignup(label)}
-            disabled={isLoading}
-            className={cn(
-              "glass flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm text-white/70",
-              "transition-all duration-200 hover:bg-white/10 hover:text-white",
-              "focus:outline-none focus:ring-2 focus:ring-violet-500/30",
-              "disabled:cursor-not-allowed disabled:opacity-40"
-            )}
-          >
-            <Icon className="h-4 w-4" />
-            <span className="hidden sm:inline">{label}</span>
-          </button>
-        ))}
-      </motion.div>
 
       {/* Bottom link */}
       <motion.p

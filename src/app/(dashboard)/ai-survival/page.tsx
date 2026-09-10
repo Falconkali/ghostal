@@ -17,14 +17,17 @@ import {
   PlusCircle,
   Shield,
   Loader2,
+  X,
 } from "lucide-react";
 import { cn, formatTitle } from "@/lib/utils";
-import { mockSurvivalLogs } from "@/lib/mock-data";
 import { useAuth } from "@/hooks/use-auth";
+import { usePlan } from "@/hooks/use-plan";
 import IntegrationRequired from "@/components/dashboard/integration-required";
+import UpgradeWall from "@/components/dashboard/upgrade-wall";
 import { supabase } from "@/lib/supabase";
 import type { SurvivalLog, VaultItem, AISuggestion } from "@/types";
 import { remixCaption } from "@/lib/automation";
+import Link from "next/link";
 
 const container = {
   hidden: { opacity: 0 },
@@ -52,12 +55,14 @@ const typeColors: Record<string, string> = {
 
 export default function AISurvivalPage() {
   const { instagramConnected, user } = useAuth();
+  const { plan, limits } = usePlan();
   const [logs, setLogs] = useState<SurvivalLog[]>([]);
   const [suggestions, setSuggestions] = useState<AISuggestion[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [applyingId, setApplyingId] = useState<string | null>(null);
   const [queueCount, setQueueCount] = useState(0);
+  const [logsLimit, setLogsLimit] = useState(10);
 
   const fetchSurvivalData = useCallback(async () => {
     if (!user) return;
@@ -67,7 +72,8 @@ export default function AISurvivalPage() {
         .from("survival_logs")
         .select("*")
         .eq("user_id", user.id)
-        .order("timestamp", { ascending: false });
+        .order("timestamp", { ascending: false })
+        .limit(logsLimit);
 
       let currentLogs: SurvivalLog[] = [];
 
@@ -82,38 +88,8 @@ export default function AISurvivalPage() {
           status: d.status as any,
           postId: d.post_id || undefined,
         }));
-      } else {
-        // Seed database logs fallback
-        const { error: seedError } = await supabase
-          .from("survival_logs")
-          .insert(
-            mockSurvivalLogs.map((l) => ({
-              user_id: user.id,
-              action: l.action,
-              description: l.description,
-              timestamp: l.timestamp,
-              status: l.status,
-            }))
-          );
-
-        if (!seedError) {
-          const { data: reFetchedLogs } = await supabase
-            .from("survival_logs")
-            .select("*")
-            .eq("user_id", user.id)
-            .order("timestamp", { ascending: false });
-          if (reFetchedLogs) {
-            currentLogs = reFetchedLogs.map((d: any) => ({
-              id: d.id,
-              action: d.action,
-              description: d.description || "",
-              timestamp: d.timestamp,
-              status: d.status as any,
-              postId: d.post_id || undefined,
-            }));
-          }
-        }
       }
+      // No logs yet — show empty state, do NOT seed mock data
 
       setLogs(currentLogs);
 
@@ -239,7 +215,7 @@ export default function AISurvivalPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [user]);
+  }, [user, logsLimit]);
 
   // Initial load
   useEffect(() => {
@@ -279,6 +255,10 @@ export default function AISurvivalPage() {
       supabase.removeChannel(channel);
     };
   }, [user, fetchSurvivalData]);
+
+  const handleDismissSuggestion = (id: string) => {
+    setSuggestions(prev => prev.filter(s => s.id !== id));
+  };
 
   const handleApplySuggestion = async (suggestion: AISuggestion) => {
     if (!user || !suggestion.vaultItemId) return;
@@ -351,11 +331,41 @@ export default function AISurvivalPage() {
     }
   };
 
+  // Auto-apply suggestion if passed in via URL
+  useEffect(() => {
+    if (typeof window === "undefined" || suggestions.length === 0 || applyingId) return;
+    
+    const params = new URLSearchParams(window.location.search);
+    const applyId = params.get("applyId");
+    
+    if (applyId) {
+      const targetSuggestion = suggestions.find((s) => s.id === applyId);
+      if (targetSuggestion) {
+        handleApplySuggestion(targetSuggestion);
+      }
+      
+      // Remove query param to prevent infinite loops on reload
+      const newUrl = window.location.pathname;
+      window.history.replaceState({}, document.title, newUrl);
+    }
+  }, [suggestions, applyingId]);
+
   if (!instagramConnected) {
     return (
       <IntegrationRequired
         pageName="AI Survival Center"
         description="Monitor automated content recycling, view log files for queue activity, configure curation thresholds, and review fallback captions by connecting your Instagram account."
+      />
+    );
+  }
+
+  if (!limits.aiSurvival) {
+    return (
+      <UpgradeWall
+        feature="AI Survival Center"
+        description="AI Survival automatically recycles and remixes your best content to keep your account alive indefinitely. Upgrade to Survival AI to unlock this feature."
+        requiredPlan="survival_ai"
+        currentPlan={plan}
       />
     );
   }
@@ -373,11 +383,11 @@ export default function AISurvivalPage() {
       {/* Header */}
       <motion.div variants={item} className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl md:text-3xl font-bold text-white flex items-center gap-3">
+          <h1 className="text-2xl md:text-3xl font-bold text-foreground flex items-center gap-3">
             <Brain className="h-7 w-7 text-violet-400" />
             AI Survival Center
           </h1>
-          <p className="mt-1 text-sm text-zinc-400">
+          <p className="mt-1 text-sm text-muted-foreground">
             AI-powered content resurrection, remixing, and survival automation.
           </p>
         </div>
@@ -442,7 +452,7 @@ export default function AISurvivalPage() {
         {/* AI Suggestions Grid - 2/3 width */}
         <div className="lg:col-span-2 space-y-4">
           <motion.div variants={item}>
-            <h2 className="text-sm font-semibold text-white flex items-center gap-2 mb-4">
+            <h2 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-4">
               <Sparkles className="h-4 w-4 text-cyan-400" />
               AI Suggestions
             </h2>
@@ -502,7 +512,7 @@ export default function AISurvivalPage() {
                       </div>
 
                       {/* Title & Description */}
-                      <h3 className="text-sm font-semibold text-white">{suggestion.title}</h3>
+                      <h3 className="text-sm font-semibold text-foreground">{suggestion.title}</h3>
                       <p className="mt-1 text-xs text-zinc-400 line-clamp-3">
                         {suggestion.description}
                       </p>
@@ -522,27 +532,45 @@ export default function AISurvivalPage() {
 
                     {/* Action */}
                     {suggestion.vaultItemId ? (
-                      <button
-                        onClick={() => handleApplySuggestion(suggestion)}
-                        disabled={isApplying}
-                        className="mt-4 flex items-center gap-2 text-xs font-semibold text-violet-400 hover:text-violet-300 disabled:opacity-50 transition-colors group-hover:translate-x-1 transition-transform"
-                      >
-                        {isApplying ? (
-                          <>
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            Queuing...
-                          </>
-                        ) : (
-                          <>
-                            <Play className="h-3 w-3" />
-                            Apply Suggestion
-                          </>
-                        )}
-                      </button>
+                      <div className="flex items-center justify-between mt-4">
+                        <button
+                          onClick={() => handleApplySuggestion(suggestion)}
+                          disabled={isApplying}
+                          className="flex items-center gap-2 text-xs font-semibold text-violet-400 hover:text-violet-300 disabled:opacity-50 transition-colors group-hover:translate-x-1 transition-transform"
+                        >
+                          {isApplying ? (
+                            <>
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              Queuing...
+                            </>
+                          ) : (
+                            <>
+                              <Play className="h-3 w-3" />
+                              Apply Suggestion
+                            </>
+                          )}
+                        </button>
+                        <button
+                          onClick={() => handleDismissSuggestion(suggestion.id)}
+                          className="p-1 rounded-md text-zinc-600 hover:text-zinc-400 hover:bg-white/5 transition-colors cursor-pointer"
+                          title="Dismiss suggestion"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
                     ) : (
-                      <span className="mt-4 text-[10px] text-zinc-600 block italic">
-                        Upload vault assets to activate
-                      </span>
+                      <div className="flex items-center justify-between mt-4">
+                        <Link href="/vault" className="text-[10px] text-zinc-400 hover:text-white transition-colors underline underline-offset-2">
+                          Upload vault assets to activate
+                        </Link>
+                        <button
+                          onClick={() => handleDismissSuggestion(suggestion.id)}
+                          className="p-1 rounded-md text-zinc-600 hover:text-zinc-400 hover:bg-white/5 transition-colors cursor-pointer"
+                          title="Dismiss suggestion"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
                     )}
                   </motion.div>
                 );
@@ -557,10 +585,10 @@ export default function AISurvivalPage() {
                 <RotateCcw className="h-5 w-5 text-cyan-400" />
               </div>
               <div>
-                <h3 className="text-sm font-semibold text-white">
+                <h3 className="text-sm font-semibold text-foreground">
                   Content Resurrection Engine
                 </h3>
-                <p className="text-xs text-zinc-400">
+                <p className="text-xs text-muted-foreground">
                   AI identifies top-performing old content ready for revival
                 </p>
               </div>
@@ -569,7 +597,7 @@ export default function AISurvivalPage() {
               {[
                 { label: "Ready to Resurrect", value: suggestions.filter(s => s.type === "resurrect").length.toString(), color: "text-cyan-400" },
                 { label: "Resurrected Total", value: successCount.toString(), color: "text-violet-400" },
-                { label: "Engagement Boost", value: "+24.5%", color: "text-emerald-400" },
+                { label: "Engagement Boost", value: "+24.5% (est.)", color: "text-emerald-400" },
               ].map((stat) => (
                 <div
                   key={stat.label}
@@ -590,42 +618,50 @@ export default function AISurvivalPage() {
             variants={item}
             className={cn(
               "rounded-xl border p-5 transition-colors",
-              queueCount < 3
+              queueCount >= 3
+                ? "bg-gradient-to-br from-emerald-500/10 to-emerald-500/5 border-emerald-500/20"
+                : queueCount === 0
                 ? "bg-gradient-to-br from-red-500/10 to-orange-500/5 border-red-500/20"
                 : "bg-gradient-to-br from-amber-500/10 to-orange-500/5 border-amber-500/20"
             )}
           >
             <div className="flex items-center gap-3 mb-3">
-              <AlertTriangle className={cn("h-5 w-5", queueCount < 3 ? "text-red-400" : "text-amber-400")} />
-              <h3 className={cn("text-sm font-semibold", queueCount < 3 ? "text-red-400" : "text-amber-400")}>
-                {queueCount < 3 ? "Critical Queue Alert" : "Queue Alert"}
+              {queueCount >= 3 ? (
+                <Shield className="h-5 w-5 text-emerald-400" />
+              ) : (
+                <AlertTriangle className={cn("h-5 w-5", queueCount === 0 ? "text-red-400" : "text-amber-400")} />
+              )}
+              <h3 className={cn("text-sm font-semibold", queueCount >= 3 ? "text-emerald-400" : queueCount === 0 ? "text-red-400" : "text-amber-400")}>
+                {queueCount >= 3 ? "Queue Healthy" : queueCount === 0 ? "Critical Queue Alert" : "Queue Alert"}
               </h3>
             </div>
             <p className="text-xs text-zinc-400 leading-relaxed">
-              {queueCount < 3
-                ? `Critical: You only have ${queueCount} posts scheduled. AI Survival system is actively running in the background to inject resurrected evergreen items.`
-                : `Your posting queue has ${queueCount} posts scheduled. The AI Survival system will auto-activate to queue backup items if count drops below 3.`}
+              {queueCount >= 3
+                ? `Your queue is healthy with ${queueCount} posts scheduled. The AI Survival system will auto-activate if the count drops below 3.`
+                : queueCount === 0
+                ? `Critical: You have no posts scheduled. AI Survival system is actively running in the background to inject resurrected evergreen items.`
+                : `Your posting queue is running low (${queueCount} posts scheduled). The AI Survival system will auto-activate to queue backup items if count drops below 3.`}
             </p>
             <div className="mt-4 h-2 w-full rounded-full bg-white/5 overflow-hidden">
               <motion.div
                 initial={{ width: 0 }}
-                animate={{ width: `${Math.min((queueCount / 10) * 100, 100)}%` }}
+                animate={{ width: `${Math.min((queueCount / 30) * 100, 100)}%` }}
                 transition={{ duration: 1 }}
                 className={cn(
                   "h-full rounded-full bg-gradient-to-r",
-                  queueCount < 3 ? "from-red-500 to-orange-500" : "from-amber-500 to-orange-500"
+                  queueCount >= 3 ? "from-emerald-500 to-cyan-500" : queueCount === 0 ? "from-red-500 to-orange-500" : "from-amber-500 to-orange-500"
                 )}
               />
             </div>
             <div className="mt-1.5 flex justify-between text-[10px] text-zinc-500">
               <span>0 posts</span>
-              <span>10 posts</span>
+              <span>30 posts</span>
             </div>
           </motion.div>
 
           {/* Survival Automation Logs */}
           <motion.div variants={item} className="glass rounded-xl p-5 max-h-[500px] overflow-y-auto custom-scrollbar">
-            <h2 className="text-sm font-semibold text-white flex items-center gap-2 mb-4">
+            <h2 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-4">
               <Zap className="h-4 w-4 text-amber-400" />
               Survival Logs
             </h2>
@@ -678,6 +714,17 @@ export default function AISurvivalPage() {
                     </div>
                   </div>
                 ))}
+
+                {logs.length >= logsLimit && (
+                  <div className="pt-2 pb-1 text-center">
+                    <button
+                      onClick={() => setLogsLimit(prev => prev + 10)}
+                      className="px-4 py-1.5 rounded-full bg-white/5 hover:bg-white/10 text-xs text-zinc-300 font-medium transition-colors cursor-pointer"
+                    >
+                      Load More Activity
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </motion.div>

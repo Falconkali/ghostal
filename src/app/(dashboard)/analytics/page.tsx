@@ -34,11 +34,16 @@ import {
   Printer,
   ChevronRight,
   Star,
+  RefreshCw,
+  X,
+  Lock,
+  Instagram,
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
+import { usePlan } from "@/hooks/use-plan";
 import IntegrationRequired from "@/components/dashboard/integration-required";
 import { supabase } from "@/lib/supabase";
-import { decrypt } from "@/lib/crypto";
+// decrypt is only used server-side (see /api/instagram/stats/route.ts)
 import type { ScheduledPost, SurvivalLog } from "@/types";
 
 interface ChartDataPoint {
@@ -73,12 +78,23 @@ const typeIcons: Record<string, React.ComponentType<{ className?: string }>> = {
   caption: FileText,
 };
 
+function formatStat(num: number): string {
+  if (!num || isNaN(num)) return "0";
+  if (num >= 1_000_000) return (num / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
+  if (num >= 1_000) return (num / 1_000).toFixed(1).replace(/\.0$/, "") + "k";
+  return num.toLocaleString();
+}
+
 export default function AnalyticsPage() {
   const { instagramConnected, user } = useAuth();
-  const [timePeriod, setTimePeriod] = useState<"week" | "month">("week");
+  const { plan, limits } = usePlan();
+  const maxDays = limits.analyticsDays;
+
+  const [timePeriod, setTimePeriod] = useState<"week" | "month" | "quarter">("week");
   const [chartView, setChartView] = useState<"reach" | "followers">("reach");
   const [mounted, setMounted] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSyncing, setIsSyncing] = useState(false);
 
   // Live Metrics States
   const [consistencyScore, setConsistencyScore] = useState(85);
@@ -89,10 +105,17 @@ export default function AnalyticsPage() {
   const [topContent, setTopContent] = useState<any[]>([]);
   const [tagPerformance, setTagPerformance] = useState<{ tag: string; count: number; avgScore: number }[]>([]);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" | "info" } | null>(null);
+  const [upgradeModal, setUpgradeModal] = useState<{ title: string; description: string; plan: string; price: string } | null>(null);
 
   // Real Instagram account stats
-  const [igStats, setIgStats] = useState<{ followers: number; mediaCount: number; handle: string } | null>(null);
+  const [igStats, setIgStats] = useState<{ followers: number; following: number; mediaCount: number; handle: string } | null>(null);
   const [igMediaLoaded, setIgMediaLoaded] = useState(false);
+  // Real per-day Instagram insights: { "YYYY-MM-DD": { reach, profileViews } }
+  const [igInsights, setIgInsights] = useState<Record<string, { reach: number; profileViews: number }>>({});
+  const [insightsAvailable, setInsightsAvailable] = useState(false);
+
+  // Raw data for memoization
+  const [rawData, setRawData] = useState<{ posts: any[], logs: any[], vault: any[], igMedia: any[], realFollowers: number }>({ posts: [], logs: [], vault: [], igMedia: [], realFollowers: 0 });
 
   useEffect(() => {
     setMounted(true);
@@ -100,286 +123,406 @@ export default function AnalyticsPage() {
 
   const showToast = (message: string, type: "success" | "error" | "info" = "success") => {
     setToast({ message, type });
-    setTimeout(() => {
-      setToast(null);
-    }, 4000);
+    setTimeout(() => setToast(null), 4000);
   };
 
-  const fetchAnalyticsData = async () => {
+  // 1. Fetch raw data ONCE (or on manual sync)
+  const fetchAnalyticsData = async (manualSync = false) => {
     if (!user) return;
-    setIsLoading(true);
+    if (manualSync) setIsSyncing(true);
+    else setIsLoading(true);
+    
     try {
-      // 1. Fetch scheduled posts from DB
-      const { data: postsData, error: postsErr } = await supabase
-        .from("scheduled_posts")
-        .select("*")
-        .eq("user_id", user.id);
+      // Fetch enough data for the largest allowed period
+      const fetchDays = maxDays >= 90 ? 91 : maxDays >= 30 ? 31 : 8;
+      const boundsDate = new Date();
+      boundsDate.setDate(boundsDate.getDate() - fetchDays);
 
-      if (postsErr) throw postsErr;
-
-      // 2. Fetch survival logs from DB
-      const { data: logsData, error: logsErr } = await supabase
-        .from("survival_logs")
-        .select("*")
-        .eq("user_id", user.id);
-
-      if (logsErr) throw logsErr;
-
-      // 3. Fetch vault items from DB
-      const { data: vaultData, error: vaultErr } = await supabase
-        .from("vault_items")
-        .select("*")
-        .eq("user_id", user.id);
-
-      if (vaultErr) throw vaultErr;
+      const [
+        { data: postsData },
+        { data: logsData },
+        { data: vaultData },
+        { data: profileRow }
+      ] = await Promise.all([
+        supabase.from("scheduled_posts").select("*").eq("user_id", user.id).gte("scheduled_at", boundsDate.toISOString()),
+        supabase.from("survival_logs").select("*").eq("user_id", user.id).gte("created_at", boundsDate.toISOString()),
+        supabase.from("vault_items").select("*").eq("user_id", user.id),
+        supabase.from("profiles").select("instagram_handle").eq("id", user.id).single()
+      ]);
 
       const posts = postsData || [];
       const logs = logsData || [];
       const vault = vaultData || [];
-
-      // ─────────────────────────────────────────────────────────────
-      // 4. Fetch REAL Instagram data via Graph API
-      // ─────────────────────────────────────────────────────────────
-      const { data: profileRow } = await supabase
-        .from("profiles")
-        .select("instagram_token, instagram_handle")
-        .eq("id", user.id)
-        .single();
-
-      let igMediaItems: { timestamp: string; like_count: number; comments_count: number; media_type: string }[] = [];
+      
+      let igMediaItems: any[] = [];
       let realFollowers = 0;
       let realMediaCount = 0;
       let realHandle = profileRow?.instagram_handle || "";
 
-      const decryptedToken = profileRow?.instagram_token ? decrypt(profileRow.instagram_token) : "";
-
-      if (decryptedToken) {
+      // Client-side caching for Instagram API calls
+      const cacheKeyStats = `ig_stats_v2_${user.id}`;
+      const cacheKeyMedia = `ig_media_v2_${user.id}`;
+      const now = Date.now();
+      
+      let cachedStats = null;
+      let cachedMedia = null;
+      
+      if (!manualSync && typeof window !== "undefined") {
         try {
-          // Fetch real account stats (followers_count, media_count)
-          const accountRes = await fetch(
-            `https://graph.instagram.com/v21.0/me?fields=followers_count,media_count,username&access_token=${decryptedToken}`
-          );
-          const accountData = await accountRes.json();
-          if (!accountData.error) {
-            realFollowers = accountData.followers_count ?? 0;
-            realMediaCount = accountData.media_count ?? 0;
-            realHandle = accountData.username || realHandle;
-            setIgStats({ followers: realFollowers, mediaCount: realMediaCount, handle: realHandle });
-          }
+          const s = sessionStorage.getItem(cacheKeyStats);
+          const m = sessionStorage.getItem(cacheKeyMedia);
+          if (s) { const p = JSON.parse(s); if (now - p.timestamp < 300000) cachedStats = p.data; }
+          if (m) { const p = JSON.parse(m); if (now - p.timestamp < 300000) cachedMedia = p.data; }
+        } catch(e) {}
+      }
 
-          // Fetch recent media with likes & comments (available with instagram_business_basic)
-          const mediaRes = await fetch(
-            `https://graph.instagram.com/v21.0/me/media?fields=id,timestamp,like_count,comments_count,media_type&limit=50&access_token=${decryptedToken}`
-          );
-          const mediaData = await mediaRes.json();
-          if (!mediaData.error && mediaData.data) {
-            igMediaItems = mediaData.data;
-            setIgMediaLoaded(true);
+      let realFollowing = 0;
+      try {
+        if (cachedStats) {
+          realFollowers = cachedStats.followers ?? 0;
+          realFollowing = cachedStats.following ?? 0;
+          realMediaCount = cachedStats.postsCount ?? 0;
+          realHandle = cachedStats.username || realHandle;
+        } else {
+          const statsRes = await fetch(`/api/instagram/stats`);
+          if (statsRes.ok) {
+            const statsData = await statsRes.json();
+            realFollowers = statsData.followers ?? 0;
+            realFollowing = statsData.following ?? 0;
+            realMediaCount = statsData.postsCount ?? 0;
+            realHandle = statsData.username || realHandle;
+            if (typeof window !== "undefined") sessionStorage.setItem(cacheKeyStats, JSON.stringify({ timestamp: now, data: statsData }));
           }
-        } catch (igErr) {
-          console.warn("Instagram API error in analytics:", igErr);
         }
-      }
+        setIgStats({ followers: realFollowers, following: realFollowing, mediaCount: realMediaCount, handle: realHandle });
 
-
-
-      // ─────────────────────────────────────────────────────────────
-      // 5. Queue / Survival metrics (from DB)
-      // ─────────────────────────────────────────────────────────────
-      const activationsCount = logs.filter(
-        (l) => l.action?.toLowerCase().includes("resurrect") || l.action?.toLowerCase().includes("activate")
-      ).length;
-      setSurvivalActivations(activationsCount);
-
-      const futureScheduled = posts.filter(
-        (p) => p.status === "scheduled" && new Date(p.scheduled_at).getTime() > Date.now()
-      );
-
-      let lifespan = 0;
-      if (futureScheduled.length > 0) {
-        const sorted = [...futureScheduled].sort(
-          (a, b) => new Date(b.scheduled_at).getTime() - new Date(a.scheduled_at).getTime()
-        );
-        lifespan = Math.max(0, Math.ceil((new Date(sorted[0].scheduled_at).getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
-      }
-      setQueueLifespanDays(lifespan);
-
-      const recentPostsCount = posts.filter(
-        (p) => new Date(p.scheduled_at).getTime() > Date.now() - 7 * 24 * 60 * 60 * 1000
-      ).length;
-      const calculatedConsistency = Math.min(100, Math.max(0, Math.round(50 + recentPostsCount * 8 + (lifespan > 3 ? 15 : 0))));
-      setConsistencyScore(calculatedConsistency || 85);
-
-      const queueHealth = Math.min(100, Math.round((lifespan / 15) * 100));
-      setMomentumStability(Math.round((calculatedConsistency + Math.max(70, queueHealth)) / 2) || 88);
-
-      // ─────────────────────────────────────────────────────────────
-      // 6. Top Content from vault (DB, sorted by performance_score)
-      // ─────────────────────────────────────────────────────────────
-      const sortedVault = [...vault].sort((a, b) => (b.performance_score || 0) - (a.performance_score || 0));
-      setTopContent(sortedVault.slice(0, 5));
-
-      const tagMap: { [key: string]: { count: number; totalScore: number } } = {};
-      vault.forEach((item) => {
-        (item.tags || []).forEach((tag: string) => {
-          if (!tagMap[tag]) tagMap[tag] = { count: 0, totalScore: 0 };
-          tagMap[tag].count += 1;
-          tagMap[tag].totalScore += (item.performance_score || 0);
-        });
-      });
-      setTagPerformance(
-        Object.entries(tagMap)
-          .map(([tag, data]) => ({ tag, count: data.count, avgScore: Math.round(data.totalScore / data.count) }))
-          .sort((a, b) => b.avgScore - a.avgScore)
-          .slice(0, 5)
-      );
-
-      // ─────────────────────────────────────────────────────────────
-      // 7. Build Chart Data
-      // ─────────────────────────────────────────────────────────────
-      const daysOfWeek = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-      const weeksOfMonth = ["W1", "W2", "W3", "W4"];
-
-      if (timePeriod === "week") {
-        const synthesized: ChartDataPoint[] = daysOfWeek.map((day, idx) => {
-          const dayOffset = idx - new Date().getDay() + 1;
-          const targetDay = new Date();
-          targetDay.setDate(targetDay.getDate() + dayOffset);
-
-          // Real post items from DB for this day
-          const postsOnDay = posts.filter((p) => {
-            const d = new Date(p.scheduled_at);
-            return (
-              d.getFullYear() === targetDay.getFullYear() &&
-              d.getMonth() === targetDay.getMonth() &&
-              d.getDate() === targetDay.getDate()
-            );
-          });
-
-          const postCount = postsOnDay.length;
-
-          // Fetch average performance score of scheduled vault items for this day
-          let avgPerfScore = 75; // Default fallback score
-          if (postCount > 0) {
-            const scores = postsOnDay.map((p) => {
-              const vaultItem = vault.find((v) => v.id === p.vault_item_id);
-              return vaultItem?.performance_score ?? 75;
-            });
-            avgPerfScore = Math.round(scores.reduce((sum, s) => sum + s, 0) / scores.length);
+        if (cachedMedia) {
+          igMediaItems = cachedMedia.items || [];
+          if (igMediaItems.length > 0) setIgMediaLoaded(true);
+        } else {
+          const mediaRes = await fetch(`/api/instagram/media`);
+          if (mediaRes.ok) {
+            const mediaData = await mediaRes.json();
+            if (mediaData.items && mediaData.items.length > 0) {
+              igMediaItems = mediaData.items;
+              setIgMediaLoaded(true);
+              if (typeof window !== "undefined") sessionStorage.setItem(cacheKeyMedia, JSON.stringify({ timestamp: now, data: mediaData }));
+            }
           }
-
-          // Real engagement from IG media API for this day
-          const igPostsOnDay = igMediaItems.filter((m) => {
-            const d = new Date(m.timestamp);
-            return (
-              d.getFullYear() === targetDay.getFullYear() &&
-              d.getMonth() === targetDay.getMonth() &&
-              d.getDate() === targetDay.getDate()
-            );
-          });
-
-          const totalEngagements = igPostsOnDay.reduce((sum, m) => sum + (m.like_count || 0) + (m.comments_count || 0), 0);
-          
-          // Engagement rate is real if connected, otherwise derived from database content performance
-          const engagementRate = igPostsOnDay.length > 0 && realFollowers > 0
-            ? parseFloat(Math.max(0.5, (totalEngagements / realFollowers) * 100).toFixed(1))
-            : parseFloat((postCount > 0 ? 1.5 + (avgPerfScore / 100) * 5.0 : 0.8 + (idx % 3) * 0.1).toFixed(1));
-
-          // Reach is real if connected, otherwise estimated from your actual posts' performance index
-          const currentFollowers = realFollowers || 12500;
-          const baselineReach = Math.round(currentFollowers * 0.015);
-          const estimatedReach = postCount > 0
-            ? baselineReach + Math.round(postsOnDay.map((p) => {
-                const vaultItem = vault.find((v) => v.id === p.vault_item_id);
-                const score = vaultItem?.performance_score ?? 75;
-                return (currentFollowers * 0.12) * (score / 100);
-              }).reduce((sum, r) => sum + r, 0))
-            : baselineReach;
-
-          return {
-            date: day,
-            posts: postCount,
-            reach: estimatedReach,
-            engagement: engagementRate,
-            followers: realFollowers || (12500 + idx * 30),
-            newFollowers: Math.round((realFollowers || 12500) * 0.002) + postCount * 3,
-            momentum: Math.min(100, 70 + postCount * 10),
-          };
-        });
-        setChartData(synthesized);
-      } else {
-        const synthesized: ChartDataPoint[] = weeksOfMonth.map((week, idx) => {
-          const startDaysAgo = (4 - idx) * 7;
-          const endDaysAgo = (3 - idx) * 7;
-
-          const postsInWeek = posts.filter((p) => {
-            const timeDiff = Date.now() - new Date(p.scheduled_at).getTime();
-            const daysAgo = timeDiff / (1000 * 60 * 60 * 24);
-            return daysAgo >= endDaysAgo && daysAgo < startDaysAgo;
-          });
-
-          const postCount = postsInWeek.length;
-
-          // Fetch average performance score for posts in this week bucket
-          let avgPerfScore = 75;
-          if (postCount > 0) {
-            const scores = postsInWeek.map((p) => {
-              const vaultItem = vault.find((v) => v.id === p.vault_item_id);
-              return vaultItem?.performance_score ?? 75;
-            });
-            avgPerfScore = Math.round(scores.reduce((sum, s) => sum + s, 0) / scores.length);
+        }
+        // Fire-and-forget has been replaced by actually consuming insights data
+        const cacheKeyInsights = `ig_insights_v1_${user.id}`;
+        let insightsByDate: Record<string, { reach: number; profileViews: number }> = {};
+        try {
+          const cachedInsights = typeof window !== "undefined" ? sessionStorage.getItem(cacheKeyInsights) : null;
+          if (!manualSync && cachedInsights) {
+            const parsed = JSON.parse(cachedInsights);
+            if (Date.now() - parsed.timestamp < 300000) insightsByDate = parsed.data;
+          } else {
+            const insightsRes = await fetch("/api/instagram/insights");
+            if (insightsRes.ok) {
+              const insightsJson = await insightsRes.json();
+              if (insightsJson.available && insightsJson.byDate) {
+                insightsByDate = insightsJson.byDate;
+                if (typeof window !== "undefined") sessionStorage.setItem(cacheKeyInsights, JSON.stringify({ timestamp: Date.now(), data: insightsByDate }));
+              }
+            }
           }
-
-          // Real IG media for this week bucket
-          const igPostsInWeek = igMediaItems.filter((m) => {
-            const timeDiff = Date.now() - new Date(m.timestamp).getTime();
-            const daysAgo = timeDiff / (1000 * 60 * 60 * 24);
-            return daysAgo >= endDaysAgo && daysAgo < startDaysAgo;
-          });
-
-          const totalEngagements = igPostsInWeek.reduce((sum, m) => sum + (m.like_count || 0) + (m.comments_count || 0), 0);
-          
-          // Engagement is real if connected, otherwise derived from database content performance
-          const engagementRate = igPostsInWeek.length > 0 && realFollowers > 0
-            ? parseFloat(Math.max(0.5, (totalEngagements / realFollowers) * 100).toFixed(1))
-            : parseFloat((postCount > 0 ? 1.8 + (avgPerfScore / 100) * 4.8 : 1.1 + (idx % 2) * 0.1).toFixed(1));
-
-          const currentFollowers = realFollowers || 12500;
-          const baselineReach = Math.round(currentFollowers * 0.05);
-          const estimatedReach = postCount > 0
-            ? baselineReach + Math.round(postsInWeek.map((p) => {
-                const vaultItem = vault.find((v) => v.id === p.vault_item_id);
-                const score = vaultItem?.performance_score ?? 75;
-                return (currentFollowers * 0.32) * (score / 100);
-              }).reduce((sum, r) => sum + r, 0))
-            : baselineReach;
-
-          return {
-            date: week,
-            posts: postCount,
-            reach: estimatedReach,
-            engagement: engagementRate,
-            followers: realFollowers || (12500 + idx * 100),
-            newFollowers: Math.round((realFollowers || 12500) * 0.01) + postCount * 8,
-            momentum: Math.min(100, 75 + postCount * 4),
-          };
-        });
-        setChartData(synthesized);
+        } catch (insightsErr) {
+          console.warn("Instagram insights fetch error:", insightsErr);
+        }
+        const hasRealInsights = Object.keys(insightsByDate).length > 0;
+        setIgInsights(insightsByDate);
+        setInsightsAvailable(hasRealInsights);
+      } catch (igErr) {
+        console.warn("Instagram API error in analytics:", igErr);
       }
+
+      setRawData({ posts, logs, vault, igMedia: igMediaItems, realFollowers });
+
     } catch (err) {
       console.error("Error loading analytics data:", err);
     } finally {
       setIsLoading(false);
+      setIsSyncing(false);
     }
   };
 
   useEffect(() => {
     fetchAnalyticsData();
+    const handleAutoRun = () => fetchAnalyticsData(true);
+    window.addEventListener("automation_run", handleAutoRun);
+    return () => window.removeEventListener("automation_run", handleAutoRun);
+  }, [user]);
 
-    // Listen to background automation updates
-    window.addEventListener("automation_run", fetchAnalyticsData);
-    return () => window.removeEventListener("automation_run", fetchAnalyticsData);
-  }, [user, timePeriod]);
+  // 2. Memoized calculations based on timePeriod and rawData
+  useEffect(() => {
+    if (isLoading || (rawData.posts.length === 0 && rawData.vault.length === 0)) return;
+    
+    const { posts, logs, vault, igMedia: igMediaItems, realFollowers } = rawData;
+    
+    // Calculate global metrics
+    const activationsCount = logs.filter(
+      (l) => l.action?.toLowerCase().includes("resurrect") || l.action?.toLowerCase().includes("activate")
+    ).length;
+    setSurvivalActivations(activationsCount);
+
+    const futureScheduled = posts.filter(
+      (p) => p.status === "scheduled" && new Date(p.scheduled_at).getTime() > Date.now()
+    );
+
+    let lifespan = 0;
+    if (futureScheduled.length > 0) {
+      const sorted = [...futureScheduled].sort(
+        (a, b) => new Date(b.scheduled_at).getTime() - new Date(a.scheduled_at).getTime()
+      );
+      lifespan = Math.max(0, Math.ceil((new Date(sorted[0].scheduled_at).getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
+    }
+    setQueueLifespanDays(lifespan);
+
+    const recentPostsCount = posts.filter(
+      (p) => new Date(p.scheduled_at).getTime() > Date.now() - 7 * 24 * 60 * 60 * 1000
+    ).length;
+    const calculatedConsistency = Math.min(100, Math.max(0, Math.round(50 + recentPostsCount * 8 + (lifespan > 3 ? 15 : 0))));
+    setConsistencyScore(calculatedConsistency || 85);
+
+    const queueHealth = Math.min(100, Math.round((lifespan / 15) * 100));
+    setMomentumStability(Math.round((calculatedConsistency + Math.max(70, queueHealth)) / 2) || 88);
+
+    const sortedVault = [...vault].sort((a, b) => (b.performance_score || 0) - (a.performance_score || 0));
+    setTopContent(sortedVault.slice(0, 5));
+
+    const tagMap: { [key: string]: { count: number; totalScore: number } } = {};
+    vault.forEach((item) => {
+      (item.tags || []).forEach((tag: string) => {
+        if (!tagMap[tag]) tagMap[tag] = { count: 0, totalScore: 0 };
+        tagMap[tag].count += 1;
+        tagMap[tag].totalScore += (item.performance_score || 0);
+      });
+    });
+    setTagPerformance(
+      Object.entries(tagMap)
+        .map(([tag, data]) => ({ tag, count: data.count, avgScore: Math.round(data.totalScore / data.count) }))
+        .sort((a, b) => b.avgScore - a.avgScore)
+        .slice(0, 5)
+    );
+
+    // Filter posts for chart bounds
+    const daysOfWeek = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    const weeksOfMonth = ["W1", "W2", "W3", "W4"];
+
+    if (timePeriod === "week") {
+      const synthesized: ChartDataPoint[] = daysOfWeek.map((day, idx) => {
+        const dayOffset = idx - new Date().getDay() + 1;
+        const targetDay = new Date();
+        targetDay.setDate(targetDay.getDate() + dayOffset);
+
+        const postsOnDay = posts.filter((p) => {
+          const d = new Date(p.scheduled_at);
+          return (
+            d.getFullYear() === targetDay.getFullYear() &&
+            d.getMonth() === targetDay.getMonth() &&
+            d.getDate() === targetDay.getDate()
+          );
+        });
+
+        const postCount = postsOnDay.length;
+        let avgPerfScore = 75;
+        if (postCount > 0) {
+          const scores = postsOnDay.map((p) => {
+            const vaultItem = vault.find((v) => v.id === p.vault_item_id);
+            return vaultItem?.performance_score ?? 75;
+          });
+          avgPerfScore = Math.round(scores.reduce((sum, s) => sum + s, 0) / scores.length);
+        }
+
+        const igPostsOnDay = igMediaItems.filter((m) => {
+          const d = new Date(m.timestamp);
+          return (
+            d.getFullYear() === targetDay.getFullYear() &&
+            d.getMonth() === targetDay.getMonth() &&
+            d.getDate() === targetDay.getDate()
+          );
+        });
+
+        const currentFollowers = realFollowers || 0;
+        const isFuture = targetDay.getTime() > Date.now();
+
+        // Format targetDay as "YYYY-MM-DD" to look up real insights
+        const dateKey = targetDay.toISOString().substring(0, 10);
+        const realDayInsights = igInsights[dateKey] ?? null;
+
+        let engagementRate = 0;
+        let estimatedReach = 0;
+
+        if (isFuture) {
+          engagementRate = postCount > 0
+            ? parseFloat((1.5 + (avgPerfScore / 100) * 5.0).toFixed(1))
+            : 0;
+          const baselineReach = Math.round(currentFollowers * 0.015);
+          estimatedReach = postCount > 0
+            ? baselineReach + Math.round(postsOnDay.map((p) => {
+                const vaultItem = vault.find((v) => v.id === p.vault_item_id);
+                const score = vaultItem?.performance_score ?? 75;
+                return (currentFollowers * 0.12) * (score / 100);
+              }).reduce((sum, r) => sum + r, 0))
+            : 0;
+        } else if (realDayInsights) {
+          // ✅ Real Instagram Insights data
+          estimatedReach = realDayInsights.reach;
+          const totalEngagements = igPostsOnDay.reduce((sum, m) => sum + (m.like_count || 0) + (m.comments_count || 0), 0);
+          engagementRate = currentFollowers > 0
+            ? parseFloat(((totalEngagements / currentFollowers) * 100).toFixed(1))
+            : parseFloat(totalEngagements.toFixed(1));
+        } else {
+          if (igPostsOnDay.length > 0) {
+            const totalEngagements = igPostsOnDay.reduce((sum, m) => sum + (m.like_count || 0) + (m.comments_count || 0), 0);
+            engagementRate = currentFollowers > 0
+               ? parseFloat(((totalEngagements / currentFollowers) * 100).toFixed(1))
+               : parseFloat(totalEngagements.toFixed(1));
+            estimatedReach = totalEngagements > 0 ? totalEngagements * 10 : Math.round(currentFollowers * 0.015);
+          } else {
+             engagementRate = 0;
+             estimatedReach = 0;
+          }
+        }
+
+        return {
+          date: day,
+          posts: postCount,
+          reach: estimatedReach,
+          engagement: engagementRate,
+          followers: currentFollowers > 0 ? currentFollowers : 0,
+          newFollowers: Math.round(currentFollowers * 0.002) + postCount * 3,
+          momentum: Math.min(100, 70 + postCount * 10),
+        };
+      });
+      setChartData(synthesized);
+    } else if (timePeriod === "month") {
+      const synthesized: ChartDataPoint[] = weeksOfMonth.map((week, idx) => {
+        const startDaysAgo = (4 - idx) * 7;
+        const endDaysAgo = (3 - idx) * 7;
+
+        const postsInWeek = posts.filter((p) => {
+          const timeDiff = Date.now() - new Date(p.scheduled_at).getTime();
+          const daysAgo = timeDiff / (1000 * 60 * 60 * 24);
+          return daysAgo >= endDaysAgo && daysAgo < startDaysAgo;
+        });
+
+        const postCount = postsInWeek.length;
+        let avgPerfScore = 75;
+        if (postCount > 0) {
+          const scores = postsInWeek.map((p) => {
+            const vaultItem = vault.find((v) => v.id === p.vault_item_id);
+            return vaultItem?.performance_score ?? 75;
+          });
+          avgPerfScore = Math.round(scores.reduce((sum, s) => sum + s, 0) / scores.length);
+        }
+
+        const igPostsInWeek = igMediaItems.filter((m) => {
+          const timeDiff = Date.now() - new Date(m.timestamp).getTime();
+          const daysAgo = timeDiff / (1000 * 60 * 60 * 24);
+          return daysAgo >= endDaysAgo && daysAgo < startDaysAgo;
+        });
+
+        const currentFollowers = realFollowers || 0;
+        const startDaysAgoForEng = (4 - idx) * 7;
+        const isFuture = startDaysAgoForEng < 0; // If startDaysAgo is negative, it's future
+
+        let engagementRate = 0;
+        let estimatedReach = 0;
+
+        if (isFuture) {
+          engagementRate = postCount > 0
+            ? parseFloat((1.8 + (avgPerfScore / 100) * 4.8).toFixed(1))
+            : 0;
+          const baselineReach = Math.round(currentFollowers * 0.05);
+          estimatedReach = postCount > 0
+            ? baselineReach + Math.round(postsInWeek.map((p) => {
+                const vaultItem = vault.find((v) => v.id === p.vault_item_id);
+                const score = vaultItem?.performance_score ?? 75;
+                return (currentFollowers * 0.32) * (score / 100);
+              }).reduce((sum, r) => sum + r, 0))
+            : 0;
+        } else {
+          if (igPostsInWeek.length > 0) {
+            const totalEngagements = igPostsInWeek.reduce((sum, m) => sum + (m.like_count || 0) + (m.comments_count || 0), 0);
+            engagementRate = currentFollowers > 0 
+               ? parseFloat(((totalEngagements / currentFollowers) * 100).toFixed(1))
+               : parseFloat(totalEngagements.toFixed(1));
+            estimatedReach = totalEngagements > 0 ? totalEngagements * 10 : Math.round(currentFollowers * 0.05);
+          } else {
+             engagementRate = 0;
+             estimatedReach = 0;
+          }
+        }
+
+        return {
+          date: week,
+          posts: postCount,
+          reach: estimatedReach,
+          engagement: engagementRate,
+          followers: currentFollowers > 0 ? currentFollowers : 0,
+          newFollowers: Math.round(currentFollowers * 0.01) + postCount * 8,
+          momentum: Math.min(100, 75 + postCount * 4),
+        };
+      });
+      setChartData(synthesized);
+    } else if (timePeriod === "quarter") {
+      // 90-day view — 12 weekly buckets
+      const synthesized: ChartDataPoint[] = Array.from({ length: 12 }, (_, idx) => {
+        const weekLabel = `W${idx + 1}`;
+        const startDaysAgo = (12 - idx) * 7;
+        const endDaysAgo = (11 - idx) * 7;
+
+        const postsInWeek = posts.filter((p) => {
+          const timeDiff = Date.now() - new Date(p.scheduled_at).getTime();
+          const daysAgo = timeDiff / (1000 * 60 * 60 * 24);
+          return daysAgo >= endDaysAgo && daysAgo < startDaysAgo;
+        });
+
+        const postCount = postsInWeek.length;
+        let avgPerfScore = 75;
+        if (postCount > 0) {
+          const scores = postsInWeek.map((p) => {
+            const vaultItem = vault.find((v) => v.id === p.vault_item_id);
+            return vaultItem?.performance_score ?? 75;
+          });
+          avgPerfScore = Math.round(scores.reduce((sum, s) => sum + s, 0) / scores.length);
+        }
+
+        const igPostsInWeek = igMediaItems.filter((m) => {
+          const timeDiff = Date.now() - new Date(m.timestamp).getTime();
+          const daysAgo = timeDiff / (1000 * 60 * 60 * 24);
+          return daysAgo >= endDaysAgo && daysAgo < startDaysAgo;
+        });
+
+        const currentFollowers = realFollowers || 0;
+        let engagementRate = 0;
+        let estimatedReach = 0;
+
+        if (igPostsInWeek.length > 0) {
+          const totalEngagements = igPostsInWeek.reduce((sum, m) => sum + (m.like_count || 0) + (m.comments_count || 0), 0);
+          engagementRate = currentFollowers > 0
+            ? parseFloat(((totalEngagements / currentFollowers) * 100).toFixed(1))
+            : parseFloat(totalEngagements.toFixed(1));
+          estimatedReach = totalEngagements > 0 ? totalEngagements * 10 : Math.round(currentFollowers * 0.05);
+        }
+
+        return {
+          date: weekLabel,
+          posts: postCount,
+          reach: estimatedReach,
+          engagement: engagementRate,
+          followers: currentFollowers > 0 ? currentFollowers : 0,
+          newFollowers: Math.round(currentFollowers * 0.01) + postCount * 8,
+          momentum: Math.min(100, 75 + postCount * 4),
+        };
+      });
+      setChartData(synthesized);
+    }
+  }, [timePeriod, rawData, isLoading, igInsights]);
+
 
   // Export CSV Report completely client-side
   const exportAnalyticsReport = () => {
@@ -404,9 +547,9 @@ export default function AnalyticsPage() {
       ]);
 
       const csvContent = [
-        ["GHOSTFLOW EXECUTIVE SYSTEM ANALYTICS SCORECARD"],
+        ["Ghostal EXECUTIVE SYSTEM ANALYTICS SCORECARD"],
         [`Generated on: ${new Date().toLocaleString()}`],
-        [`Account: @${user?.instagramHandle || "ghostflow_user"}`],
+        [`Account: @${user?.instagramHandle || "Ghostal_user"}`],
         [`Plan Tier: ${user?.plan || "Starter"}`],
         [],
         ["TIMELINE ENGAGEMENT METRICS"],
@@ -436,7 +579,7 @@ export default function AnalyticsPage() {
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.setAttribute("href", url);
-      link.setAttribute("download", `GhostFlow_System_Report_${new Date().toISOString().split('T')[0]}.csv`);
+      link.setAttribute("download", `Ghostal_System_Report_${new Date().toISOString().split('T')[0]}.csv`);
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -532,6 +675,65 @@ export default function AnalyticsPage() {
         }
       `}} />
 
+      {/* Upgrade Plan Modal */}
+      <AnimatePresence>
+        {upgradeModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+            onClick={() => setUpgradeModal(null)}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0, y: 10 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 10 }}
+              transition={{ type: "spring", stiffness: 300, damping: 25 }}
+              className="relative w-full max-w-sm rounded-2xl bg-[#0f0f1a] border border-white/10 p-6 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                onClick={() => setUpgradeModal(null)}
+                className="absolute right-4 top-4 rounded-lg p-1.5 text-zinc-500 hover:bg-white/5 hover:text-white transition-colors cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500/10 border border-amber-500/20 mb-4">
+                <Lock className="h-5 w-5 text-amber-400" />
+              </div>
+
+              <h3 className="text-base font-bold text-foreground">{upgradeModal.title}</h3>
+              <p className="mt-2 text-sm text-zinc-400 leading-relaxed">{upgradeModal.description}</p>
+
+              <div className="mt-4 rounded-xl border border-violet-500/20 bg-violet-500/5 px-4 py-3 flex items-center justify-between">
+                <div>
+                  <p className="text-xs text-muted-foreground">Required Plan</p>
+                  <p className="text-sm font-bold text-white">{upgradeModal.plan}</p>
+                </div>
+                <span className="text-lg font-bold text-violet-400">{upgradeModal.price}</span>
+              </div>
+
+              <div className="mt-4 flex gap-3">
+                <button
+                  onClick={() => setUpgradeModal(null)}
+                  className="flex-1 rounded-xl border border-white/10 py-2.5 text-sm font-semibold text-zinc-400 hover:bg-white/5 hover:text-white transition-all cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <a
+                  href="/#pricing"
+                  className="flex-1 rounded-xl bg-violet-600 py-2.5 text-sm font-bold text-white text-center hover:bg-violet-500 transition-all hover:shadow-[0_0_15px_rgba(139,92,246,0.4)]"
+                >
+                  Upgrade Plan
+                </a>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Floating Toast Notification */}
       <AnimatePresence>
         {toast && (
@@ -552,10 +754,10 @@ export default function AnalyticsPage() {
       {/* Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">
+          <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
             Momentum Analytics
           </h1>
-          <p className="text-sm text-zinc-400">
+          <p className="text-sm text-muted-foreground">
             Real-time health and continuity metrics for your Instagram presence.
           </p>
         </div>
@@ -572,61 +774,151 @@ export default function AnalyticsPage() {
                   : "text-zinc-400 hover:text-white"
               }`}
             >
-              This Week
+              7 Days
             </button>
             <button
-              onClick={() => setTimePeriod("month")}
+              onClick={() => {
+                if (maxDays < 30) {
+                  setUpgradeModal({
+                    title: "30-Day Analytics Locked",
+                    description: "Access 30 days of analytics history, weekly trend breakdowns, and engagement tracking. Available on the Creator Pro plan.",
+                    plan: "Creator Pro",
+                    price: "$29/mo",
+                  });
+                  return;
+                }
+                setTimePeriod("month");
+              }}
               className={`rounded-md px-3.5 py-1.5 text-xs font-semibold transition-all cursor-pointer ${
                 timePeriod === "month"
                   ? "bg-violet-600 text-white shadow"
+                  : maxDays < 30
+                  ? "text-zinc-600 cursor-not-allowed"
                   : "text-zinc-400 hover:text-white"
               }`}
             >
-              This Month
+              30 Days {maxDays < 30 && "🔒"}
+            </button>
+            <button
+              onClick={() => {
+                if (maxDays < 90) {
+                  setUpgradeModal({
+                    title: "90-Day Analytics Locked",
+                    description: "Unlock 90 days of full analytics history with 12-week trend breakdowns and deep engagement data. Available on the Survival AI plan.",
+                    plan: "Survival AI",
+                    price: "$49/mo",
+                  });
+                  return;
+                }
+                setTimePeriod("quarter");
+              }}
+              className={`rounded-md px-3.5 py-1.5 text-xs font-semibold transition-all cursor-pointer ${
+                timePeriod === "quarter"
+                  ? "bg-violet-600 text-white shadow"
+                  : maxDays < 90
+                  ? "text-zinc-600 cursor-not-allowed"
+                  : "text-zinc-400 hover:text-white"
+              }`}
+            >
+              90 Days {maxDays < 90 && "🔒"}
             </button>
           </div>
 
-          {/* Export Report Action */}
-          <button
-            onClick={exportAnalyticsReport}
-            className="flex items-center gap-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white px-4 py-2 text-xs font-bold shadow-lg shadow-violet-600/20 transition-all cursor-pointer active:scale-95"
-          >
-            <Download className="h-3.5 w-3.5" />
-            Export Scorecard
-          </button>
+          {/* Export Report & Sync Actions */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => fetchAnalyticsData(true)}
+              disabled={isSyncing}
+              className="flex items-center justify-center rounded-lg bg-white/5 border border-white/5 hover:bg-white/10 text-zinc-400 hover:text-white px-3 py-2 transition-all cursor-pointer disabled:opacity-50"
+              title="Refresh Analytics Data"
+            >
+              <RefreshCw className={`h-4 w-4 ${isSyncing ? "animate-spin text-violet-400" : ""}`} />
+            </button>
+            <button
+              onClick={exportAnalyticsReport}
+              className="flex items-center gap-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white px-4 py-2 text-xs font-bold shadow-lg shadow-violet-600/20 transition-all cursor-pointer active:scale-95"
+            >
+              <Download className="h-3.5 w-3.5" />
+              Export Scorecard
+            </button>
+          </div>
         </div>
       </div>
 
       {/* Live Instagram Account Stats Banner */}
-      {igStats && (
-        <motion.div
-          initial={{ opacity: 0, y: -8 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="flex flex-wrap items-center gap-3 rounded-2xl border border-emerald-500/20 bg-emerald-500/5 px-5 py-3"
-        >
-          <span className="relative flex h-2 w-2 shrink-0">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
-          </span>
-          <span className="text-xs font-semibold text-emerald-400 uppercase tracking-widest">Live Instagram Data</span>
-          <div className="h-3 w-px bg-white/10" />
-          <span className="text-xs text-zinc-300">
-            <span className="font-bold text-white">{igStats.followers.toLocaleString()}</span> followers
-          </span>
-          <div className="h-3 w-px bg-white/10" />
-          <span className="text-xs text-zinc-300">
-            <span className="font-bold text-white">{igStats.mediaCount.toLocaleString()}</span> posts
-          </span>
-          <div className="h-3 w-px bg-white/10" />
-          <span className="text-xs text-zinc-400">@{igStats.handle}</span>
-          {igMediaLoaded && (
-            <>
-              <div className="h-3 w-px bg-white/10" />
-              <span className="text-[10px] text-emerald-500 font-semibold">✓ Engagement data from real posts</span>
-            </>
-          )}
-        </motion.div>
-      )}
+      {/* Option 2: Instagram Channel & Audience Overview Hero Banner */}
+      <motion.div
+        variants={itemVariants}
+        className="rounded-2xl border border-border/80 bg-gradient-to-r from-[#12111A] via-[#161426] to-[#0F0E1A] p-5 shadow-2xl relative overflow-hidden glow-violet"
+      >
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 relative z-10">
+          {/* Left: Account Identity */}
+          <div className="flex items-center gap-4">
+            <div className="relative h-14 w-14 shrink-0 rounded-full p-[2px] bg-gradient-to-tr from-amber-500 via-rose-500 to-purple-600 shadow-xl">
+              {user?.instagramProfilePictureUrl || user?.avatar ? (
+                <img
+                  src={user?.instagramProfilePictureUrl || user?.avatar}
+                  alt={user?.instagramHandle || "Instagram"}
+                  className="h-full w-full rounded-full object-cover bg-background"
+                />
+              ) : (
+                <div className="flex h-full w-full items-center justify-center rounded-full bg-slate-900">
+                  <Instagram className="h-6 w-6 text-pink-400" />
+                </div>
+              )}
+              <span className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 ring-2 ring-background">
+                <span className="h-2 w-2 rounded-full bg-white animate-pulse" />
+              </span>
+            </div>
+
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-lg font-bold text-foreground">
+                  @{user?.instagramHandle || igStats?.handle || "connected_account"}
+                </h2>
+                <span className="inline-flex items-center gap-1 rounded-full bg-pink-500/10 border border-pink-500/20 px-2.5 py-0.5 text-[10px] font-semibold text-pink-400">
+                  <Instagram className="h-3 w-3" />
+                  Creator Account
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1 flex items-center gap-2">
+                <span className="text-emerald-400 font-medium flex items-center gap-1">
+                  ● Connected & Auto-Syncing
+                </span>
+                <span>•</span>
+                <span>Real-time API Feed</span>
+              </p>
+            </div>
+          </div>
+
+          {/* Right: 4-Card Account Stat Grid */}
+          <div className="grid grid-cols-3 gap-3 lg:w-auto w-full">
+            <div className="rounded-xl border border-white/5 bg-white/[0.03] p-3 text-center min-w-[110px]">
+              <p className="text-xs text-muted-foreground uppercase font-semibold tracking-wider">Followers</p>
+              <p className="text-lg font-bold text-foreground mt-0.5">
+                {formatStat(rawData.realFollowers || igStats?.followers || 0)}
+              </p>
+              <span className="text-[10px] text-muted-foreground mt-0.5">Follows You</span>
+            </div>
+
+            <div className="rounded-xl border border-white/5 bg-white/[0.03] p-3 text-center min-w-[110px]">
+              <p className="text-xs text-muted-foreground uppercase font-semibold tracking-wider">Following</p>
+              <p className="text-lg font-bold text-foreground mt-0.5">
+                {formatStat(igStats?.following || 0)}
+              </p>
+              <span className="text-[10px] text-muted-foreground mt-0.5">You Follow</span>
+            </div>
+
+            <div className="rounded-xl border border-white/5 bg-white/[0.03] p-3 text-center min-w-[110px]">
+              <p className="text-xs text-muted-foreground uppercase font-semibold tracking-wider">Total Posts</p>
+              <p className="text-lg font-bold text-foreground mt-0.5">
+                {formatStat(igStats?.mediaCount || 0)}
+              </p>
+              <span className="text-[10px] text-violet-400 font-medium mt-0.5">Published</span>
+            </div>
+          </div>
+        </div>
+      </motion.div>
 
       {/* Stats Cards */}
       <motion.div
@@ -647,8 +939,9 @@ export default function AnalyticsPage() {
             <span className="text-3xl font-bold text-white">
               {consistencyScore}%
             </span>
-            <span className="flex items-center text-xs font-medium text-emerald-400">
-              <ArrowUpRight className="mr-0.5 h-3.5 w-3.5" /> +2.4%
+            <span className={`flex items-center text-xs font-medium ${consistencyScore >= 70 ? "text-emerald-400" : "text-red-400"}`}>
+              {consistencyScore >= 70 ? <ArrowUpRight className="mr-0.5 h-3.5 w-3.5" /> : <ArrowDownRight className="mr-0.5 h-3.5 w-3.5" />}
+              {consistencyScore >= 70 ? `+${consistencyScore - 70}pts` : `${consistencyScore - 70}pts`}
             </span>
           </div>
           <div className="mt-4 h-2 w-full rounded-full bg-white/5">
@@ -671,8 +964,9 @@ export default function AnalyticsPage() {
             <span className="text-3xl font-bold text-white">
               {momentumStability}%
             </span>
-            <span className="flex items-center text-xs font-medium text-emerald-400">
-              <ArrowUpRight className="mr-0.5 h-3.5 w-3.5" /> +5.1%
+            <span className={`flex items-center text-xs font-medium ${momentumStability >= 70 ? "text-emerald-400" : "text-red-400"}`}>
+              {momentumStability >= 70 ? <ArrowUpRight className="mr-0.5 h-3.5 w-3.5" /> : <ArrowDownRight className="mr-0.5 h-3.5 w-3.5" />}
+              {momentumStability >= 70 ? `+${momentumStability - 70}pts` : `${momentumStability - 70}pts`}
             </span>
           </div>
           <div className="mt-4 h-2 w-full rounded-full bg-white/5">
@@ -735,19 +1029,28 @@ export default function AnalyticsPage() {
         <div className="glass rounded-2xl p-6 lg:col-span-2 space-y-4">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <h3 className="text-lg font-semibold text-white">
+              <h3 className="text-lg font-semibold text-foreground">
                 {chartView === "reach" ? "Engagement & Reach" : "Live Followers"}
               </h3>
-              <p className="text-xs text-zinc-400">
+              <p className="text-xs text-muted-foreground">
                 {chartView === "reach"
-                  ? igMediaLoaded
-                    ? "Engagement rate from real Instagram likes & comments. Reach is estimated."
-                    : "Estimated reach & engagement from your posting activity."
+                  ? insightsAvailable
+                    ? "Real-time reach from Instagram Insights API · engagement from post activity."
+                    : "Reach & engagement estimated from posting activity and vault performance scores."
                   : igStats
-                    ? `Real follower count: ${igStats.followers.toLocaleString()} · from your connected account @${igStats.handle}`
+                    ? `Follower count from account connection · @${igStats.handle} · media count updated live`
                     : `Follower trajectory based on your posting activity.`
                 }
               </p>
+              {chartView === "reach" && insightsAvailable && (
+                <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 font-medium mt-0.5">
+                  <span className="relative flex h-1.5 w-1.5">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                    <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                  </span>
+                  Live Instagram Data
+                </span>
+              )}
             </div>
 
             {/* Toggle switch */}
@@ -774,83 +1077,41 @@ export default function AnalyticsPage() {
           <div className="h-80 w-full flex items-center justify-center bg-white/[0.01] rounded-xl border border-white/5 relative overflow-hidden">
             {mounted && !isLoading ? (
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart
-                  data={chartData}
-                  margin={{ top: 10, right: 10, left: -10, bottom: 0 }}
-                >
-                  <defs>
-                    <linearGradient id="colorReach" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.2} />
-                      <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0} />
-                    </linearGradient>
-                    <linearGradient id="colorEngagement" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#06b6d4" stopOpacity={0.2} />
-                      <stop offset="95%" stopColor="#06b6d4" stopOpacity={0} />
-                    </linearGradient>
-                    <linearGradient id="colorFollowers" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#22c55e" stopOpacity={0.2} />
-                      <stop offset="95%" stopColor="#22c55e" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1e1e30" />
-                  <XAxis
-                    dataKey="date"
-                    stroke="#71717a"
-                    fontSize={11}
-                    tickLine={false}
-                  />
-                  <YAxis stroke="#71717a" fontSize={11} tickLine={false} />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: "#12121a",
-                      borderColor: "#1e1e30",
-                      borderRadius: "12px",
-                      color: "#fff",
-                    }}
-                  />
-                  {chartView === "reach" ? (
-                    <>
-                      <Area
-                        type="monotone"
-                        dataKey="reach"
-                        name="Total Reach"
-                        stroke="#8b5cf6"
-                        strokeWidth={2}
-                        fillOpacity={1}
-                        fill="url(#colorReach)"
-                      />
-                      <Area
-                        type="monotone"
-                        dataKey="engagement"
-                        name="Engagement Rate (%)"
-                        stroke="#06b6d4"
-                        strokeWidth={2}
-                        fillOpacity={1}
-                        fill="url(#colorEngagement)"
-                      />
-                    </>
-                  ) : (
-                    <>
-                      <Area
-                        type="monotone"
-                        dataKey="followers"
-                        name="Followers"
-                        stroke="#22c55e"
-                        strokeWidth={2}
-                        fillOpacity={1}
-                        fill="url(#colorFollowers)"
-                      />
-                      <Area
-                        type="monotone"
-                        dataKey="newFollowers"
-                        name="New Gained"
-                        stroke="#06b6d4"
-                        strokeWidth={1.5}
-                        fillOpacity={0}
-                      />
-                    </>
-                  )}
-                </AreaChart>
+                {chartView === "reach" ? (
+                  <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="colorReach" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.2} />
+                        <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0} />
+                      </linearGradient>
+                      <linearGradient id="colorEngagement" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#06b6d4" stopOpacity={0.2} />
+                        <stop offset="95%" stopColor="#06b6d4" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1e1e30" />
+                    <XAxis dataKey="date" stroke="#71717a" fontSize={11} tickLine={false} />
+                    <YAxis stroke="#71717a" fontSize={11} tickLine={false} />
+                    <Tooltip contentStyle={{ backgroundColor: "#12121a", borderColor: "#1e1e30", borderRadius: "12px", color: "#fff" }} />
+                    <Area type="monotone" dataKey="reach" name="Total Reach" stroke="#8b5cf6" strokeWidth={2} fillOpacity={1} fill="url(#colorReach)" />
+                    <Area type="monotone" dataKey="engagement" name="Engagement Rate (%)" stroke="#06b6d4" strokeWidth={2} fillOpacity={1} fill="url(#colorEngagement)" />
+                  </AreaChart>
+                ) : (
+                  <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="colorFollowers" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#22c55e" stopOpacity={0.2} />
+                        <stop offset="95%" stopColor="#22c55e" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1e1e30" />
+                    <XAxis dataKey="date" stroke="#71717a" fontSize={11} tickLine={false} />
+                    <YAxis stroke="#71717a" fontSize={11} tickLine={false} />
+                    <Tooltip contentStyle={{ backgroundColor: "#12121a", borderColor: "#1e1e30", borderRadius: "12px", color: "#fff" }} />
+                    <Area type="monotone" dataKey="followers" name="Followers" stroke="#22c55e" strokeWidth={2} fillOpacity={1} fill="url(#colorFollowers)" />
+                    <Area type="monotone" dataKey="newFollowers" name="New Gained" stroke="#06b6d4" strokeWidth={1.5} fillOpacity={0} />
+                  </AreaChart>
+                )}
               </ResponsiveContainer>
             ) : (
               <div className="flex flex-col items-center gap-2 text-zinc-500">
@@ -864,8 +1125,8 @@ export default function AnalyticsPage() {
         {/* Radial Index Chart */}
         <div className="glass rounded-2xl p-6 flex flex-col justify-between">
           <div>
-            <h3 className="text-lg font-semibold text-white">Momentum Breakdown</h3>
-            <p className="text-xs text-zinc-400">
+            <h3 className="text-lg font-semibold text-foreground">Momentum Breakdown</h3>
+            <p className="text-xs text-muted-foreground">
               Key dimensions guarding account health.
             </p>
           </div>
@@ -938,8 +1199,8 @@ export default function AnalyticsPage() {
         {/* Content Leaderboard Card */}
         <div className="glass rounded-2xl p-6 md:col-span-2 space-y-4">
           <div>
-            <h3 className="text-lg font-semibold text-white">Top Performing Content</h3>
-            <p className="text-xs text-zinc-400">
+            <h3 className="text-lg font-semibold text-foreground">Top Performing Content</h3>
+            <p className="text-xs text-muted-foreground">
               Blueprints in your vault with the highest algorithmic distribution metrics.
             </p>
           </div>
@@ -1028,8 +1289,8 @@ export default function AnalyticsPage() {
         <div className="glass rounded-2xl p-6 space-y-4 flex flex-col justify-between">
           <div className="space-y-4">
             <div>
-              <h3 className="text-lg font-semibold text-white">Category Performance</h3>
-              <p className="text-xs text-zinc-400">
+              <h3 className="text-lg font-semibold text-foreground">Category Performance</h3>
+              <p className="text-xs text-muted-foreground">
                 Average engagement metric split by specific content tags.
               </p>
             </div>
@@ -1077,7 +1338,7 @@ export default function AnalyticsPage() {
 
           <div className="mt-4 border-t border-white/5 pt-4 text-center no-print">
             <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-widest">
-              GhostFlow Algorithmic Index
+              Ghostal Algorithmic Index
             </span>
           </div>
         </div>
@@ -1088,8 +1349,8 @@ export default function AnalyticsPage() {
         {/* Posts Volume Chart */}
         <div className="glass rounded-2xl p-6 space-y-4">
           <div>
-            <h3 className="text-lg font-semibold text-white">Posting Volume</h3>
-            <p className="text-xs text-zinc-400">
+            <h3 className="text-lg font-semibold text-foreground">Posting Volume</h3>
+            <p className="text-xs text-muted-foreground">
               Total updates (scheduled posts & survival triggers) successfully output.
             </p>
           </div>
@@ -1137,42 +1398,78 @@ export default function AnalyticsPage() {
         <div className="glass rounded-2xl p-6 flex flex-col justify-between">
           <div className="space-y-4">
             <div>
-              <h3 className="text-lg font-semibold text-white">AI Health Recommendations</h3>
-              <p className="text-xs text-zinc-400">
+              <h3 className="text-lg font-semibold text-foreground">AI Health Recommendations</h3>
+              <p className="text-xs text-muted-foreground">
                 Actionable tips compiled from your latest account metadata.
               </p>
             </div>
 
             <div className="space-y-3">
-              <div className="flex gap-3 rounded-xl bg-violet-600/5 border border-violet-500/10 p-3.5">
-                <Sparkles className="h-5 w-5 text-violet-400 shrink-0 mt-0.5" />
-                <div>
-                  <h4 className="text-sm font-semibold text-white">Vault Health: Refill Recommended</h4>
-                  <p className="text-xs text-zinc-400 mt-0.5 leading-relaxed">
-                    Evergreen items have been used twice on average. Uploading 3-4 new reels will refresh the remix pool.
-                  </p>
+              {topContent.length < 3 ? (
+                <div className="flex gap-3 rounded-xl bg-violet-600/5 border border-violet-500/10 p-3.5">
+                  <Sparkles className="h-5 w-5 text-violet-400 shrink-0 mt-0.5" />
+                  <div>
+                    <h4 className="text-sm font-semibold text-foreground">Vault Health: Refill Recommended</h4>
+                    <p className="text-xs text-zinc-400 mt-0.5 leading-relaxed">
+                      Your vault has limited items. Uploading 3-4 new reels or images will refresh the remix pool and improve Ghost Mode variety.
+                    </p>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="flex gap-3 rounded-xl bg-violet-600/5 border border-violet-500/10 p-3.5">
+                  <Sparkles className="h-5 w-5 text-violet-400 shrink-0 mt-0.5" />
+                  <div>
+                    <h4 className="text-sm font-semibold text-foreground">Vault Health: Healthy</h4>
+                    <p className="text-xs text-zinc-400 mt-0.5 leading-relaxed">
+                      You have sufficient content in your vault for the AI to remix. Top performers are being successfully prioritized.
+                    </p>
+                  </div>
+                </div>
+              )}
 
-              <div className="flex gap-3 rounded-xl bg-cyan-600/5 border border-cyan-500/10 p-3.5">
-                <Activity className="h-5 w-5 text-cyan-400 shrink-0 mt-0.5" />
-                <div>
-                  <h4 className="text-sm font-semibold text-white">Optimal Posting Frequency Protected</h4>
-                  <p className="text-xs text-zinc-400 mt-0.5 leading-relaxed">
-                    Survival queue successfully bridged the burnout window. Consistency score remains in the green.
-                  </p>
+              {consistencyScore > 80 ? (
+                <div className="flex gap-3 rounded-xl bg-cyan-600/5 border border-cyan-500/10 p-3.5">
+                  <Activity className="h-5 w-5 text-cyan-400 shrink-0 mt-0.5" />
+                  <div>
+                    <h4 className="text-sm font-semibold text-foreground">Optimal Posting Frequency Protected</h4>
+                    <p className="text-xs text-zinc-400 mt-0.5 leading-relaxed">
+                      Survival queue successfully bridged any burnout windows. Consistency score remains in the green zone.
+                    </p>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="flex gap-3 rounded-xl bg-cyan-600/5 border border-cyan-500/10 p-3.5">
+                  <Activity className="h-5 w-5 text-cyan-400 shrink-0 mt-0.5" />
+                  <div>
+                    <h4 className="text-sm font-semibold text-foreground">Consistency Dropping</h4>
+                    <p className="text-xs text-zinc-400 mt-0.5 leading-relaxed">
+                      Your posting consistency has dipped recently. Consider scheduling more posts or enabling AI Survival.
+                    </p>
+                  </div>
+                </div>
+              )}
 
-              <div className="flex gap-3 rounded-xl bg-amber-600/5 border border-amber-500/10 p-3.5">
-                <Clock className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" />
-                <div>
-                  <h4 className="text-sm font-semibold text-white">Queue Expiry Alert</h4>
-                  <p className="text-xs text-zinc-400 mt-0.5 leading-relaxed">
-                    Scheduled queue expires in {queueLifespanDays} days. AI recommends configuring Ghost Mode to remix captions if you plan to be away.
-                  </p>
+              {queueLifespanDays <= 3 ? (
+                <div className="flex gap-3 rounded-xl bg-amber-600/5 border border-amber-500/10 p-3.5">
+                  <AlertTriangle className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" />
+                  <div>
+                    <h4 className="text-sm font-semibold text-foreground">Queue Expiry Alert</h4>
+                    <p className="text-xs text-zinc-400 mt-0.5 leading-relaxed">
+                      Scheduled queue expires in {queueLifespanDays} days. AI recommends configuring Ghost Mode or adding manual posts.
+                    </p>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="flex gap-3 rounded-xl bg-emerald-600/5 border border-emerald-500/10 p-3.5">
+                  <Clock className="h-5 w-5 text-emerald-400 shrink-0 mt-0.5" />
+                  <div>
+                    <h4 className="text-sm font-semibold text-foreground">Queue Safe Buffer</h4>
+                    <p className="text-xs text-zinc-400 mt-0.5 leading-relaxed">
+                      Scheduled queue has a safe buffer of {queueLifespanDays} days before exhaustion. You can safely step away.
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 

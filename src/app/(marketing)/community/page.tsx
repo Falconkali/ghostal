@@ -3,7 +3,7 @@ import { APP_NAME } from "@/lib/constants";
 
 export const metadata = {
   title: `Creator Community — ${APP_NAME}`,
-  description: "Join the GhostFlow Discord community. Connect with top creators, share social growth strategies, and join masterclasses.",
+  description: "Join the Ghostal Discord community. Connect with top creators, share social growth strategies, and join masterclasses.",
 };
 
 const events = [
@@ -123,7 +123,7 @@ export default function CommunityPage() {
               </div>
             </div>
             <p className="text-xs italic text-white/40 leading-relaxed mt-6">
-              &ldquo;GhostFlow allowed me to go on a 2-week backpacking trip with zero service. My feed stayed updated and I didn&apos;t lose any reach.&rdquo;
+              &ldquo;Ghostal allowed me to go on a 2-week backpacking trip with zero service. My feed stayed updated and I didn&apos;t lose any reach.&rdquo;
             </p>
           </div>
         </section>

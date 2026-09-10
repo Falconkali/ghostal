@@ -1,11 +1,31 @@
-import { Trash2, Mail, ShieldCheck, ArrowRight } from "lucide-react";
-import { APP_NAME } from "@/lib/constants";
-import Link from "next/link";
+"use client";
 
-export const metadata = {
-  title: `Data Deletion Instructions — ${APP_NAME}`,
-  description: "Learn how to request deletion of your account and personal data from GhostFlow.",
-};
+import { Trash2, Mail, ShieldCheck, CheckCircle } from "lucide-react";
+import { APP_NAME } from "@/lib/constants";
+// Note: metadata is exported from layout.tsx in this directory
+import { useSearchParams } from "next/navigation";
+import { Suspense } from "react";
+
+function ConfirmationBanner() {
+  const searchParams = useSearchParams();
+  const code = searchParams.get("code");
+
+  if (!code) return null;
+
+  return (
+    <div className="mb-8 rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-5 flex items-start gap-4">
+      <CheckCircle className="h-6 w-6 text-emerald-400 shrink-0 mt-0.5" />
+      <div>
+        <p className="text-sm font-semibold text-emerald-400">Deletion Request Confirmed</p>
+        <p className="text-xs text-white/50 mt-1">
+          Your data deletion has been processed. Confirmation code:{" "}
+          <code className="font-mono text-white/70 bg-white/5 px-1.5 py-0.5 rounded">{code}</code>
+        </p>
+        <p className="text-xs text-white/40 mt-1">Keep this code for your records. All connected Instagram data has been removed.</p>
+      </div>
+    </div>
+  );
+}
 
 export default function DataDeletionPage() {
   return (
@@ -23,8 +43,13 @@ export default function DataDeletionPage() {
           <header className="border-b border-white/5 pb-8 mb-8">
             <span className="text-xs font-semibold text-violet-400 uppercase tracking-wider block mb-2">Compliance</span>
             <h1 id="deletion-title" className="text-4xl font-extrabold text-white tracking-tight">Data Deletion Instructions</h1>
-            <p className="text-sm text-white/40 mt-2">Last Updated: May 28, 2026</p>
+            <p className="text-sm text-white/40 mt-2">Last Updated: July 15, 2026</p>
           </header>
+
+          {/* Confirmation banner shown when Meta redirects here with ?code= */}
+          <Suspense fallback={null}>
+            <ConfirmationBanner />
+          </Suspense>
 
           <section className="space-y-4">
             <p className="text-white/60 leading-relaxed">
@@ -66,7 +91,7 @@ export default function DataDeletionPage() {
                 </p>
                 <ol className="list-decimal pl-4 text-xs text-white/45 space-y-1.5 mb-4">
                   <li>Compose an email from your registered address.</li>
-                  <li>Send it to: <a href="mailto:privacy@ghostflow.ai" className="text-violet-400 hover:underline">privacy@ghostflow.ai</a></li>
+                  <li>Send it to: <a href="mailto:support@ghostal.xyz" className="text-violet-400 hover:underline">support@ghostal.xyz</a></li>
                   <li>Use the subject line: <strong>Data Deletion Request</strong>.</li>
                   <li>We will verify and process it within 24–48 hours.</li>
                 </ol>
@@ -118,6 +143,9 @@ export default function DataDeletionPage() {
               <li>Click on <strong>Business Integrations</strong>.</li>
               <li>Find <strong>{APP_NAME}</strong> in the list and click <strong>Remove</strong>.</li>
             </ol>
+            <p className="text-xs text-white/40 mt-2">
+              When you remove the app through Facebook, Meta automatically triggers our data deletion callback and all your data is erased from our servers within minutes.
+            </p>
           </section>
         </article>
       </div>

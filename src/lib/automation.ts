@@ -21,7 +21,7 @@ const REMIX_TEMPLATES = [
   },
   {
     hook: "A quick reminder for anyone building in public right now: ✨",
-    cta: "Follow @GhostFlow for more daily automation strategies! 🔔"
+    cta: "Follow @Ghostal for more daily automation strategies! 🔔"
   }
 ];
 
@@ -54,7 +54,7 @@ export async function checkAndPublishDuePosts(userId: string, client = supabase,
   // 1. Fetch scheduled posts that are due
   const { data: duePosts, error: fetchError } = await client
     .from("scheduled_posts")
-    .select("*")
+    .select("*, vault_items(media_url, media_type)")
     .eq("user_id", userId)
     .eq("status", "scheduled")
     .lte("scheduled_at", nowStr);
@@ -86,12 +86,8 @@ export async function checkAndPublishDuePosts(userId: string, client = supabase,
     let mediaUrl = "";
     let mediaType = "image";
 
-    if (post.vault_item_id) {
-      const { data: vaultItem } = await client
-        .from("vault_items")
-        .select("media_url, media_type")
-        .eq("id", post.vault_item_id)
-        .single();
+    if (post.vault_items) {
+      const vaultItem = Array.isArray(post.vault_items) ? post.vault_items[0] : post.vault_items;
       if (vaultItem) {
         mediaUrl = vaultItem.media_url || "";
         mediaType = vaultItem.media_type || "image";
@@ -102,7 +98,6 @@ export async function checkAndPublishDuePosts(userId: string, client = supabase,
 
     if (decryptedToken && profile?.instagram_id && mediaUrl) {
       try {
-        console.log(`Attempting real Instagram publish for post ${post.id}...`);
         
         // 1. Create Media Container
         const containerUrl = `https://graph.instagram.com/v21.0/${profile.instagram_id}/media`;
@@ -145,7 +140,6 @@ export async function checkAndPublishDuePosts(userId: string, client = supabase,
             `https://graph.instagram.com/v21.0/${creationId}?fields=status_code&access_token=${decryptedToken}`
           );
           const statusData = await statusRes.json();
-          console.log(`Container status attempt ${attempt + 1} for post ${post.id}:`, statusData.status_code);
           if (statusData.status_code === "FINISHED") {
             onProgress?.(`Media ready — publishing to Instagram...`);
             containerReady = true;
@@ -196,7 +190,6 @@ export async function checkAndPublishDuePosts(userId: string, client = supabase,
           // Graceful fallback ONLY for development-mode app review restriction
           success = true;
           logDescription = `Simulated Publish (Meta App Review required. Content: "${(post.caption || "").slice(0, 35)}...")`;
-          console.log("Simulating publication success: app is pending Meta App Review.");
         } else {
           // Real error - log it fully so we can debug
           success = false;

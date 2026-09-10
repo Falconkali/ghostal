@@ -222,11 +222,9 @@ export default function DocsPage() {
                 <p className="text-white/60 leading-relaxed mb-4">
                   Ghost Mode is guided by the **Inactivity Detection Engine**. You can adjust the detection threshold inside settings:
                 </p>
-                <ul className="list-disc pl-6 text-white/60 space-y-2 mb-6">
-                  <li><strong>Aggressive:</strong> System triggers after 24 hours of no activity.</li>
-                  <li><strong>Standard (Recommended):</strong> System triggers after 48 hours.</li>
-                  <li><strong>Conservative:</strong> System triggers after 72 hours.</li>
-                </ul>
+                <p className="text-white/60 leading-relaxed mb-6">
+                  Using the flexible slider, you can set the exact number of days (from 1 to 14) of inactivity before the system steps in and begins publishing on your behalf.
+                </p>
               </section>
 
               {/* Vault */}
@@ -241,7 +239,7 @@ export default function DocsPage() {
                     Vault Status Query Example
                   </h4>
                   <pre className="text-xs text-white/70 font-mono overflow-x-auto bg-[#0a0a0f] p-4 rounded-lg">
-{`curl -X GET "https://api.ghostflow.ai/v1/vault" \\
+{`curl -X GET "https://api.Ghostal.ai/v1/vault" \\
   -H "Authorization: Bearer YOUR_API_KEY"`}
                   </pre>
                 </div>
@@ -277,8 +275,8 @@ export default function DocsPage() {
                 </p>
                 <div className="rounded-xl border border-white/5 bg-[#12121a] p-4 font-mono text-xs text-white/70 space-y-2">
                   <p className="text-violet-400">// API endpoint headers</p>
-                  <p>X-GhostFlow-Client-ID: [your_client_id]</p>
-                  <p>X-GhostFlow-Signature: [sha256_payload_signature]</p>
+                  <p>X-Ghostal-Client-ID: [your_client_id]</p>
+                  <p>X-Ghostal-Signature: [sha256_payload_signature]</p>
                 </div>
               </section>
             </article>

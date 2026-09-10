@@ -1,0 +1,58 @@
+Created At: 2026-08-04T02:52:02+05:30
+Completed At: 2026-08-04T02:52:02+05:30
+File Path: `file:///c:/Users/dell/OneDrive/Desktop/happy/page_old.tsx`
+Total Lines: 64
+Total Bytes: 3632
+Showing lines 1 to 50
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+1: Now let's rewrite `src/app/(dashboard)/dashboard/page.tsx` to match the exact visual layout and components in the user screenshot!
+2: 
+3: Let's double-check all sections of `page.tsx`:
+4: 
+5: 1. **Greeting Banner**:
+6:    - "Good evening, Shiva 👋" (computes morning / afternoon / evening based on current hour, fallback to Shiva or user's first name).
+7:    - "Your Instagram is protected."
+8:    - "Next post goes live in **2h 14m**." (calculates time dynamically or shows next scheduled time).
+9:    - Right side: Decorative dark shield graphics + wave lines.
+10: 
+11: 2. **Top 4 Stat Cards**:
+12:    - **Momentum Score**: `61` | `↑ +4 vs last 7 days` + blue sparkline
+13:    - **Queue Health**: `29%` | `↑ +8% vs last 7 days` + blue sparkline
+14:    - **Day Streak**: `15` | `↑ 2 days best: 23 days` + blue sparkline
+15:    - **Risk Level**: `Low` (vibrant green text) | `🛡️✓` green shield check icon | "No issues detected"
+16: 
+17: 3. **Today's Tasks Card**:
+18:    - Header: "Today's Tasks" | Link: "View all"
+19:    - Checklist items (interactive toggleable check marks!):
+20:      1. ◯ Create content for tomorrow `[Due today]` `>`
+21:      2. ◯ Approve AI caption for Reel `[AI]` (purple badge) `>`
+22:      3. ◯ Schedule Reel for this evening `[Due today]` `>`
+23:      4. ◯ Review analytics and performance `[Due today]` `>`
+24: 
+25: 4. **Middle 2-Column Row**:
+26:    - **Left Column**: **Upcoming Schedule**
+27:      - Header: "Upcoming Schedule" | Link: "View calendar"
+28:      - Grouped timeline:
+29:        - **TODAY**: `7:00 PM` | Image thumbnail | **Reel** `[Ready]` (green badge) | "Good evening routine ✨" `>`
+30:        - **TOMORROW**: `8:30 AM` | Image thumbnail | **Carousel** `[Draft]` (gray badge) | "5 habits for a productive day" `>`
+31:        - **THURSDAY**: `12:00 PM` | Image thumbnail | **Story** `[Scheduled]` (blue badge) | "Daily reminder 💙" `>`
+32:      - Footer: "View full schedule"
+33:    - **Right Column**: **AI Recommendations**
+34:      - Header: "AI Recommendations" | Link: "View all"
+35:      - Items:
+36:        1. Green circular repost icon | **Repost "Morning Routine"** | Estimated reach +21% | Button `Apply`
+37:        2. Amber circular clock icon | **Post between 7–8 PM** | +12% engagement | Button `Schedule`
+38:        3. Red circular text icon | **Caption too long** | Reduce by 40% for better reach | Button `Fix`
+39: 
+40: 5. **Next 2-Column Row**:
+41:    - **Left Column**: **Instagram Account**
+42:      - Avatar with vibrant gradient ring (`@lines_and_dashes` verified badge)
+43:      - Subtitle: "Business Account • Connected 3 days ago"
+44:      - 3 Stats: `6,231` Followers | `106` Posts | `4.8%` Engagement
+45:      - Button: `Manage Connection`
+46:    - **Right Column**: **Analytics Overview**
+47:      - Header: "Analytics Overview" | Link: "View analytics"
+48:      - 2x2 grid:
+49:        - **Reach**: `12.4K` | `↑ 18%` + sparkline
+50:        - **Impressions**: `28.6K` | `↑ 14%` + sparkline
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

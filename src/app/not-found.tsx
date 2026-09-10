@@ -1,50 +1,67 @@
-"use client";
-
-import { Ghost, Home, ArrowLeft } from "lucide-react";
 import Link from "next/link";
+import { Ghost } from "lucide-react";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "Page Not Found",
+  description: "The page you are looking for does not exist.",
+};
 
 export default function NotFound() {
   return (
-    <div className="min-h-screen bg-[#07070a] dot-grid flex items-center justify-center p-4 relative overflow-hidden">
-      {/* Background Radial Glow */}
-      <div className="absolute top-1/2 left-1/2 h-[450px] w-[450px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-violet-600/[0.03] blur-[120px] pointer-events-none" />
-      <div className="absolute top-1/4 right-1/4 h-[300px] w-[300px] rounded-full bg-cyan-600/5 blur-[95px] pointer-events-none animate-glow-pulse" />
+    <div className="min-h-screen bg-[#09090f] flex flex-col items-center justify-center px-4 text-center relative overflow-hidden">
+      {/* Background blob */}
+      <div className="pointer-events-none absolute inset-0">
+        <div className="absolute left-1/4 top-1/4 h-[400px] w-[400px] rounded-full bg-violet-600/10 blur-[120px]" />
+        <div className="absolute right-1/4 bottom-1/4 h-[300px] w-[300px] rounded-full bg-cyan-500/10 blur-[120px]" />
+      </div>
 
-      <div className="relative z-10 w-full max-w-md text-center">
-        {/* Ghost floating circle */}
-        <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-violet-500/10 border border-violet-500/20 text-violet-400 shadow-[0_0_20px_rgba(139,92,246,0.15)] animate-float">
-          <Ghost className="h-8 w-8" />
+      {/* Content */}
+      <div className="relative z-10 space-y-6 max-w-md">
+        {/* Ghost icon */}
+        <div className="flex justify-center">
+          <div className="flex h-24 w-24 items-center justify-center rounded-3xl bg-gradient-to-br from-violet-500/20 to-cyan-500/20 ring-1 ring-white/10">
+            <Ghost className="h-12 w-12 text-violet-400" />
+          </div>
         </div>
 
-        {/* Heading */}
-        <span className="inline-block rounded-full bg-violet-500/10 border border-violet-500/20 px-3.5 py-1 text-xs font-semibold text-violet-400 uppercase tracking-wider mb-3">
-          Error 404
-        </span>
-        <h1 className="text-3xl font-extrabold text-white tracking-tight sm:text-4xl">
-          Lost in the Algorithm
-        </h1>
-        <p className="mt-3 text-sm text-zinc-400 leading-relaxed max-w-sm mx-auto">
-          The page you are looking for has been archived, scheduled, or deleted. Keep posting consistency high by returning to the controls.
+        {/* Error code */}
+        <p className="text-sm font-semibold uppercase tracking-widest text-violet-400">
+          404 — Not Found
         </p>
 
-        {/* CTAs */}
-        <div className="mt-8 flex flex-col sm:flex-row gap-3 justify-center">
+        {/* Title */}
+        <h1 className="text-3xl font-extrabold text-white sm:text-4xl">
+          This page has gone{" "}
+          <span className="gradient-text">ghost</span>
+        </h1>
+
+        {/* Subtitle */}
+        <p className="text-base text-white/50">
+          The page you're looking for doesn't exist, was moved, or is haunted by our Ghost Mode AI.
+        </p>
+
+        {/* CTA */}
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
+          <Link
+            href="/"
+            className="rounded-xl bg-gradient-to-r from-violet-600 to-cyan-500 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-violet-500/20 hover:brightness-110 transition-all"
+          >
+            Go Home
+          </Link>
           <Link
             href="/dashboard"
-            className="flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-cyan-500 px-6 py-3.5 text-sm font-semibold text-white shadow-lg shadow-violet-500/25 hover:shadow-violet-500/40 hover:brightness-110 active:scale-[0.98] transition-all"
+            className="rounded-xl border border-white/10 bg-white/5 px-6 py-3 text-sm font-semibold text-white/80 hover:bg-white/10 hover:text-white transition-all"
           >
-            <Home className="h-4 w-4" />
-            Return to Dashboard
+            Dashboard
           </Link>
-          <button
-            onClick={() => window.history.back()}
-            className="flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-6 py-3.5 text-sm font-semibold text-white hover:border-white/20 hover:bg-white/10 transition-all active:scale-[0.98] cursor-pointer"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            Go Back
-          </button>
         </div>
       </div>
+
+      {/* Footer */}
+      <p className="absolute bottom-6 text-xs text-white/20">
+        © {new Date().getFullYear()} Ghostal
+      </p>
     </div>
   );
 }

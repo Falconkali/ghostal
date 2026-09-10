@@ -3,7 +3,7 @@ import { APP_NAME } from "@/lib/constants";
 
 export const metadata = {
   title: `API Reference — ${APP_NAME}`,
-  description: "Developer API documentation for GhostFlow. Connect programmatic workflows, upload vault media, and track momentum scores.",
+  description: "Developer API documentation for Ghostal. Connect programmatic workflows, upload vault media, and track momentum scores.",
 };
 
 const endpoints = [
@@ -20,7 +20,7 @@ const endpoints = [
     response: `{
   "id": "vlt_87f191b9",
   "status": "PROCESSED",
-  "media_url": "https://cdn.ghostflow.ai/vlt_87f191b9.mp4",
+  "media_url": "https://cdn.Ghostal.ai/vlt_87f191b9.mp4",
   "created_at": "2026-05-25T10:00:00Z"
 }`,
   },
@@ -103,7 +103,7 @@ Authorization: Bearer gf_live_...
               All requests must be made over HTTPS. HTTP requests will be redirected to secure connections automatically.
             </p>
             <pre className="text-xs text-white/70 font-mono bg-[#09090f] p-3.5 rounded-lg overflow-x-auto">
-https://api.ghostflow.ai/v1
+https://api.Ghostal.ai/v1
             </pre>
           </div>
         </section>

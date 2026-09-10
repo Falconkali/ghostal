@@ -4,7 +4,6 @@ import Comparison from "@/components/landing/comparison";
 import Features from "@/components/landing/features";
 import ComingSoon from "@/components/landing/coming-soon";
 import Testimonials from "@/components/landing/testimonials";
-import Pricing from "@/components/landing/pricing";
 import FinalCTA from "@/components/landing/final-cta";
 
 export default function LandingPage() {
@@ -16,7 +15,6 @@ export default function LandingPage() {
       <Features />
       <ComingSoon />
       <Testimonials />
-      <Pricing />
       <FinalCTA />
     </>
   );

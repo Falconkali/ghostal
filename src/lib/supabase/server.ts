@@ -19,20 +19,18 @@ export async function createClient() {
       },
       set(name: string, value: string, options: CookieOptions) {
         try {
+          // Let Supabase SSR manage its own auth cookie flags.
+          // Overriding with httpOnly breaks the browser client's session sync.
           cookieStore.set({ name, value, ...options });
-        } catch (error) {
-          // The `set` method was called from a Server Component.
-          // This can be ignored if you have middleware refreshing
-          // user sessions.
+        } catch {
+          // Called from a Server Component — safe to ignore.
         }
       },
       remove(name: string, options: CookieOptions) {
         try {
-          cookieStore.set({ name, value: "", ...options });
-        } catch (error) {
-          // The `remove` method was called from a Server Component.
-          // This can be ignored if you have middleware refreshing
-          // user sessions.
+          cookieStore.set({ name, value: "", ...options, maxAge: 0 });
+        } catch {
+          // Called from a Server Component — safe to ignore.
         }
       },
     },
@@ -43,13 +41,9 @@ export function createAdminClient() {
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!serviceRoleKey) {
-    console.warn("Warning: SUPABASE_SERVICE_ROLE_KEY is not defined in environment variables. Falling back to anon key.");
-    return createSupabaseClient(supabaseUrl, supabaseAnonKey, {
-      auth: {
-        persistSession: false,
-        autoRefreshToken: false,
-      },
-    });
+    throw new Error(
+      "SUPABASE_SERVICE_ROLE_KEY is not configured. Admin operations require the service role key."
+    );
   }
 
   return createSupabaseClient(supabaseUrl, serviceRoleKey, {

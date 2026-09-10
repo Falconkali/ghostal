@@ -1,0 +1,21 @@
+{
+  "name": "Ghostal",
+  "short_name": "Ghostal",
+  "description": "Automated content backup and queue consistency system for Instagram creators.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#12121a",
+  "theme_color": "#7c3aed",
+  "icons": [
+    {
+      "src": "/logo.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/logo.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

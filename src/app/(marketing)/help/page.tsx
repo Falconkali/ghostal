@@ -1,14 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, Minus, Search, HelpCircle, ArrowRight } from "lucide-react";
+import { Plus, Minus, Search, HelpCircle, ArrowRight, Inbox } from "lucide-react";
 import { APP_NAME } from "@/lib/constants";
 import Link from "next/link";
 
 const faqs = [
   {
-    question: "Will Instagram shadowban me for using GhostFlow?",
-    answer: "No. GhostFlow publishes content using the official Meta Graph API. We do not perform scraping, browser emulation, or reverse-engineered API calls. Your account remains 100% compliant with Instagram's Developer Terms.",
+    question: "Will Instagram shadowban me for using Ghostal?",
+    answer: "No. Ghostal publishes content using the official Meta Graph API. We do not perform scraping, browser emulation, or reverse-engineered API calls. Your account remains 100% compliant with Instagram's Developer Terms.",
   },
   {
     question: "How does the AI remix my old captions?",
@@ -20,7 +20,7 @@ const faqs = [
   },
   {
     question: "Can I review content before it goes live in Ghost Mode?",
-    answer: "Yes! You can configure notifications. GhostFlow can ping you via email or push notification 12 hours before publishing a backup post, letting you edit, approve, or cancel it with a single tap.",
+    answer: "Yes! You can configure notifications. Ghostal can ping you via email or push notification 12 hours before publishing a backup post, letting you edit, approve, or cancel it with a single tap.",
   },
   {
     question: "Which platforms do you support?",
@@ -30,10 +30,17 @@ const faqs = [
 
 export default function HelpCenterPage() {
   const [openIdx, setOpenIdx] = useState<number | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const toggleFAQ = (idx: number) => {
     setOpenIdx(openIdx === idx ? null : idx);
   };
+
+  const filteredFaqs = faqs.filter(
+    (faq) =>
+      faq.question.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      faq.answer.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   return (
     <div className="relative min-h-screen pt-32 pb-24 overflow-hidden">
@@ -65,6 +72,8 @@ export default function HelpCenterPage() {
             type="text"
             placeholder="Search help articles..."
             id="help-search"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full rounded-2xl border border-white/5 bg-[#12121a] px-5 py-4 pl-12 text-sm text-white placeholder-white/40 focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500"
           />
           <Search className="absolute left-4 top-4.5 h-5 w-5 text-white/40" />
@@ -72,35 +81,53 @@ export default function HelpCenterPage() {
 
         {/* FAQ Accordion */}
         <section className="space-y-4 mb-20">
-          {faqs.map((faq, idx) => {
-            const isOpen = openIdx === idx;
-            return (
-              <div
-                key={idx}
-                className="rounded-2xl border border-white/5 bg-[#12121a] overflow-hidden transition-all duration-300 hover:border-white/10"
-              >
-                <button
-                  onClick={() => toggleFAQ(idx)}
-                  id={`faq-toggle-${idx}`}
-                  className="w-full flex items-center justify-between gap-4 px-6 py-5 text-left text-white hover:text-violet-400 transition-colors"
-                >
-                  <span className="font-bold text-base md:text-lg">{faq.question}</span>
-                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white/5 text-white/60">
-                    {isOpen ? <Minus className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
-                  </div>
-                </button>
-                <div
-                  className={`transition-all duration-300 ease-in-out ${
-                    isOpen ? "max-h-[300px] border-t border-white/5 px-6 py-5" : "max-h-0 overflow-hidden"
-                  }`}
-                >
-                  <p className="text-sm text-white/50 leading-relaxed">
-                    {faq.answer}
-                  </p>
-                </div>
+          {filteredFaqs.length === 0 ? (
+            <div className="rounded-2xl border border-white/5 bg-[#12121a]/50 p-12 text-center backdrop-blur-xl max-w-xl mx-auto">
+              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-white/5 text-zinc-500 mx-auto mb-4">
+                <Inbox className="h-6 w-6" />
               </div>
-            );
-          })}
+              <h3 className="text-lg font-semibold text-white">No FAQ articles found</h3>
+              <p className="text-sm text-zinc-400 mt-2 leading-relaxed">
+                We couldn&apos;t find any articles matching &quot;{searchQuery}&quot;. Try broadening your keywords.
+              </p>
+              <button
+                onClick={() => setSearchQuery("")}
+                className="mt-6 rounded-lg bg-violet-600 px-4 py-2 text-xs font-semibold text-white hover:bg-violet-500 transition-colors cursor-pointer select-none"
+              >
+                Reset Search Query
+              </button>
+            </div>
+          ) : (
+            filteredFaqs.map((faq, idx) => {
+              const isOpen = openIdx === idx;
+              return (
+                <div
+                  key={idx}
+                  className="rounded-2xl border border-white/5 bg-[#12121a] overflow-hidden transition-all duration-300 hover:border-white/10"
+                >
+                  <button
+                    onClick={() => toggleFAQ(idx)}
+                    id={`faq-toggle-${idx}`}
+                    className="w-full flex items-center justify-between gap-4 px-6 py-5 text-left text-white hover:text-violet-400 transition-colors cursor-pointer select-none"
+                  >
+                    <span className="font-bold text-base md:text-lg">{faq.question}</span>
+                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white/5 text-white/60">
+                      {isOpen ? <Minus className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+                    </div>
+                  </button>
+                  <div
+                    className={`transition-all duration-300 ease-in-out ${
+                      isOpen ? "max-h-[300px] border-t border-white/5 px-6 py-5" : "max-h-0 overflow-hidden"
+                    }`}
+                  >
+                    <p className="text-sm text-white/50 leading-relaxed">
+                      {faq.answer}
+                    </p>
+                  </div>
+                </div>
+              );
+            })
+          )}
         </section>
 
         {/* Support CTA */}

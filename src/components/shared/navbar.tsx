@@ -2,15 +2,19 @@
 
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Menu, X, Ghost, ArrowRight } from "lucide-react";
+import { Menu, X, ArrowRight } from "lucide-react";
+import Image from "next/image";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { InteractiveHoverButton } from "@/components/ui/interactive-hover-button";
+import WaitlistModal from "@/components/shared/waitlist-modal";
 import { NAV_LINKS, APP_NAME } from "@/lib/constants";
 
 export default function Navbar() {
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [waitlistOpen, setWaitlistOpen] = useState(false);
   const pathname = usePathname();
   const router = useRouter();
 
@@ -33,7 +37,9 @@ export default function Navbar() {
 
   const handleNavClick = (href: string) => {
     setMobileOpen(false);
-    if (pathname === "/") {
+    if (href.startsWith("/")) {
+      router.push(href);
+    } else if (pathname === "/") {
       const el = document.querySelector(href);
       if (el) {
         el.scrollIntoView({ behavior: "smooth" });
@@ -50,7 +56,7 @@ export default function Navbar() {
         animate={{ y: 0 }}
         transition={{ duration: 0.6, ease: "easeOut" as const }}
         className={cn(
-          "fixed top-0 left-0 right-0 z-50 transition-all duration-300",
+          "fixed top-0 left-0 right-0 z-50 transition-[background,backdrop-filter,box-shadow] duration-300",
           scrolled
             ? "glass-strong shadow-lg shadow-black/20"
             : "bg-transparent"
@@ -68,19 +74,19 @@ export default function Navbar() {
               }
             }}
           >
-            <div className="relative flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-violet-600 to-cyan-500 shadow-lg shadow-violet-500/25 transition-shadow group-hover:shadow-violet-500/40">
-              <Ghost className="h-5 w-5 text-white" />
+            <div className="relative flex h-9 w-9 items-center justify-center rounded-lg overflow-hidden">
+              <Image src="/logo.png" alt="Ghostal" width={36} height={36} className="object-contain rounded-xl" />
             </div>
             <span className="text-xl font-bold gradient-text">{APP_NAME}</span>
           </a>
 
           {/* Desktop Nav Links */}
-          <div className="hidden items-center gap-1 md:flex">
+          <div className="hidden items-center gap-1 lg:flex">
             {NAV_LINKS.map((link) => (
               <button
                 key={link.href}
                 onClick={() => handleNavClick(link.href)}
-                className="rounded-lg px-4 py-2 text-sm font-medium text-white/70 transition-colors hover:bg-white/5 hover:text-white"
+                className="rounded-lg px-3 py-2 text-xs font-medium text-white/70 transition-colors hover:bg-white/5 hover:text-white lg:px-4 lg:text-sm"
               >
                 {link.label}
               </button>
@@ -95,13 +101,11 @@ export default function Navbar() {
             >
               Login
             </Link>
-            <Link
-              href="/signup"
-              className="group relative flex items-center gap-2 rounded-lg bg-gradient-to-r from-violet-600 to-cyan-500 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-violet-500/25 transition-all hover:shadow-violet-500/40 hover:brightness-110"
-            >
-              Start Free Trial
-              <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
-            </Link>
+            <InteractiveHoverButton 
+              text="Join Waitlist" 
+              onClick={() => setWaitlistOpen(true)}
+              className="w-40 bg-gradient-to-r from-violet-600 to-cyan-500 border-0 text-white" 
+            />
           </div>
 
           {/* Mobile Hamburger */}
@@ -164,19 +168,24 @@ export default function Navbar() {
                 >
                   Login
                 </Link>
-                <Link
-                  href="/signup"
-                  onClick={() => setMobileOpen(false)}
-                  className="flex items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-violet-600 to-cyan-500 px-5 py-3 text-base font-semibold text-white shadow-lg shadow-violet-500/25 transition-all hover:shadow-violet-500/40 hover:brightness-110"
-                >
-                  Start Free Trial
-                  <ArrowRight className="h-4 w-4" />
-                </Link>
+                  <InteractiveHoverButton 
+                    text="Join Waitlist" 
+                    onClick={() => {
+                      setMobileOpen(false);
+                      setWaitlistOpen(true);
+                    }}
+                    className="w-full bg-gradient-to-r from-violet-600 to-cyan-500 border-0 text-white py-3 h-auto" 
+                  />
               </div>
             </motion.div>
           </>
         )}
       </AnimatePresence>
+
+      <WaitlistModal 
+        isOpen={waitlistOpen} 
+        onClose={() => setWaitlistOpen(false)} 
+      />
     </>
   );
 }

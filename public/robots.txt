@@ -1,0 +1,16 @@
+User-agent: *
+Allow: /
+Allow: /login
+Allow: /signup
+Allow: /forgot-password
+Disallow: /dashboard
+Disallow: /scheduler
+Disallow: /vault
+Disallow: /ghost-mode
+Disallow: /ai-survival
+Disallow: /settings
+Disallow: /api/
+Disallow: /callback
+Disallow: /onboarding
+
+Sitemap: https://ghostal.vercel.app/sitemap.xml

@@ -61,7 +61,7 @@ export default function Testimonials() {
             </span>
           </h2>
           <p className="mx-auto mt-4 max-w-2xl text-base text-white/50 sm:text-lg">
-            Don&apos;t take our word for it. Hear from the creators GhostFlow
+            Don&apos;t take our word for it. Hear from the creators Ghostal
             keeps alive.
           </p>
         </motion.div>

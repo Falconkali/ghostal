@@ -4,6 +4,8 @@ import { useRef } from "react";
 import { motion, useInView } from "framer-motion";
 import Link from "next/link";
 import { ArrowRight, Play, Zap, Shield, Ghost, Brain } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { InteractiveHoverButton } from "@/components/ui/interactive-hover-button";
 import { APP_TAGLINE, APP_DESCRIPTION } from "@/lib/constants";
 
 const floatingCards = [
@@ -45,26 +47,24 @@ const floatingCards = [
   },
 ];
 
+// Each card gets a slightly different float offset so they feel independent
+const floatOffsets = [10, -12, 8, -10];
+
 export default function Hero() {
   const ref = useRef<HTMLElement>(null);
   const isInView = useInView(ref, { once: true, amount: 0.2 });
+  const router = useRouter();
 
   return (
     <section
       ref={ref}
       className="relative flex min-h-screen items-center justify-center overflow-hidden px-4 pt-20 sm:px-6 lg:px-8"
     >
-      {/* Background gradient blobs */}
+      {/* Background gradient blobs — static, no animation (GPU-friendly) */}
       <div className="pointer-events-none absolute inset-0">
-        <div className="absolute left-1/4 top-1/4 h-[500px] w-[500px] rounded-full bg-violet-600/20 animate-glow-pulse" />
-        <div
-          className="absolute right-1/4 bottom-1/4 h-[400px] w-[400px] rounded-full bg-cyan-500/15 animate-glow-pulse"
-          style={{ animationDelay: "2s" }}
-        />
-        <div
-          className="absolute left-1/2 top-1/2 h-[600px] w-[600px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-purple-700/10 animate-glow-pulse"
-          style={{ animationDelay: "4s" }}
-        />
+        <div className="absolute left-1/4 top-1/4 h-[500px] w-[500px] rounded-full bg-violet-600/20 blur-3xl" />
+        <div className="absolute right-1/4 bottom-1/4 h-[400px] w-[400px] rounded-full bg-cyan-500/15 blur-3xl" />
+        <div className="absolute left-1/2 top-1/2 h-[600px] w-[600px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-purple-700/10 blur-3xl" />
       </div>
 
       {/* Dot grid overlay */}
@@ -113,37 +113,51 @@ export default function Hero() {
           transition={{ duration: 0.7, delay: 0.5 }}
           className="flex flex-col items-center justify-center gap-4 sm:flex-row"
         >
-          <Link
-            href="/signup"
-            className="group relative flex items-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-cyan-500 px-8 py-4 text-base font-semibold text-white shadow-2xl shadow-violet-500/25 transition-all hover:shadow-violet-500/40 hover:brightness-110"
-          >
-            Start Free Trial
-            <ArrowRight className="h-5 w-5 transition-transform group-hover:translate-x-1" />
-            <div className="absolute inset-0 rounded-xl bg-gradient-to-r from-violet-600 to-cyan-500 opacity-0 blur-xl transition-opacity group-hover:opacity-40" />
-          </Link>
-          <Link
-            href="/login"
+          <InteractiveHoverButton 
+            text="Get Lifetime Access" 
+            onClick={() => router.push("/#pricing")}
+            className="w-56 bg-gradient-to-r from-violet-600 to-cyan-500 border-0 text-white" 
+          />
+          <a
+            href="#features"
             className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-8 py-4 text-base font-semibold text-white/80 backdrop-blur-sm transition-all hover:border-white/20 hover:bg-white/10 hover:text-white"
           >
-            <Play className="h-5 w-5 fill-current" />
-            Watch Demo
-          </Link>
+            Explore Features
+          </a>
         </motion.div>
       </div>
 
-      {/* Floating UI Cards */}
+      {/* Floating UI Cards — single Framer Motion loop, no CSS animation conflict */}
       {floatingCards.map((card, i) => (
         <motion.div
           key={card.text}
+          className={`absolute hidden lg:flex ${card.position}`}
           initial={{ opacity: 0, scale: 0.8, y: 20 }}
           animate={
             isInView
-              ? { opacity: 1, scale: 1, y: 0 }
+              ? {
+                  opacity: 1,
+                  scale: 1,
+                  y: [0, floatOffsets[i], 0],
+                }
               : {}
           }
-          transition={{ duration: 0.7, delay: card.delay }}
-          className={`absolute hidden lg:flex ${card.position} animate-float`}
-          style={{ animationDelay: `${i * 0.5}s` }}
+          transition={
+            isInView
+              ? {
+                  opacity: { duration: 0.7, delay: card.delay },
+                  scale: { duration: 0.7, delay: card.delay },
+                  y: {
+                    delay: card.delay + 0.7,
+                    duration: 3 + i * 0.4,
+                    repeat: Infinity,
+                    repeatType: "loop",
+                    ease: "easeInOut",
+                  },
+                }
+              : {}
+          }
+          style={{ willChange: "transform, opacity" }}
         >
           <div
             className={`flex items-center gap-3 rounded-xl border ${card.borderColor} bg-gradient-to-br ${card.gradient} px-4 py-3 backdrop-blur-xl shadow-2xl`}

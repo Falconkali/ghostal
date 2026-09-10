@@ -30,7 +30,9 @@ export default function ForgotPasswordPage() {
 
     setIsLoading(true);
     try {
-      const redirectToUrl = `${window.location.origin}/callback?next=/reset-password`;
+      // Supabase sends recovery links with tokens in the URL hash (#access_token=...).
+      // We point to /callback which is a client-side page that can read the hash.
+      const redirectToUrl = `${window.location.origin}/callback`;
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
         redirectTo: redirectToUrl,
       });

@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import { cn, formatTitle } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
+import { usePlan } from "@/hooks/use-plan";
 import IntegrationRequired from "@/components/dashboard/integration-required";
 import type { VaultTag, VaultItem } from "@/types";
 import { supabase } from "@/lib/supabase";
@@ -97,6 +98,7 @@ const typeIcons: Record<string, React.ComponentType<{ className?: string }>> = {
 
 export default function VaultPage() {
   const { instagramConnected, user } = useAuth();
+  const { limits } = usePlan();
 
   const [vaultItems, setVaultItems] = useState<VaultItem[]>([]);
   const [isDbLoading, setIsDbLoading] = useState(true);
@@ -105,6 +107,7 @@ export default function VaultPage() {
   // Bulk Selection State
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [bulkMenuOpen, setBulkMenuOpen] = useState(false);
+  const [deleteConfirmation, setDeleteConfirmation] = useState<{ type: 'single', id: string, title: string } | { type: 'bulk' } | null>(null);
 
   const showToast = (message: string, type: "success" | "error" | "info" = "success") => {
     setToast({ message, type });
@@ -128,12 +131,7 @@ export default function VaultPage() {
 
         if (error) {
           console.error("Error fetching vault items from DB:", error);
-          const saved = localStorage.getItem("ghostflow_vault_items");
-          if (saved) {
-            setVaultItems(JSON.parse(saved));
-          } else {
-            setVaultItems([]);
-          }
+          setVaultItems([]);
         } else if (data && data.length > 0) {
           const mapped: VaultItem[] = data.map((d: any) => ({
             id: d.id,
@@ -149,11 +147,9 @@ export default function VaultPage() {
             isEvergreen: d.is_evergreen || false,
           }));
           setVaultItems(mapped);
-          localStorage.setItem("ghostflow_vault_items", JSON.stringify(mapped));
         } else {
-          // Vault is empty — show empty state, do NOT seed fake data
+          // Vault is empty — show empty state
           setVaultItems([]);
-          localStorage.removeItem("ghostflow_vault_items");
         }
       } catch (e) {
         console.error(e);
@@ -169,6 +165,17 @@ export default function VaultPage() {
   const [activeType, setActiveType] = useState("all");
   const [activeTags, setActiveTags] = useState<VaultTag[]>([]);
   const [showUploadModal, setShowUploadModal] = useState(false);
+
+  // Pagination & Modals state
+  const [visibleCount, setVisibleCount] = useState(24);
+  const [expandedCaptionId, setExpandedCaptionId] = useState<string | null>(null);
+  const [isGlobalDragging, setIsGlobalDragging] = useState(false);
+
+  // Clear selections & reset pagination when filters change (Issue 1 & 4)
+  useEffect(() => {
+    setSelectedIds([]);
+    setVisibleCount(24);
+  }, [search, activeType, activeTags]);
 
   // Form states for Add to Vault modal
   const [uploadType, setUploadType] = useState<"photo" | "reel" | "carousel" | "caption">("photo");
@@ -202,12 +209,13 @@ export default function VaultPage() {
   };
 
   // Delete specific item
-  const handleDeleteClick = async (itemId: string) => {
-    if (!user) return;
-    if (!confirm("Are you sure you want to delete this vault item? This will also remove it from any future schedule queues.")) return;
-    try {
-      // Note: file is on Cloudinary — no Supabase storage cleanup needed
+  const handleDeleteClick = (itemId: string, itemTitle: string) => {
+    setDeleteConfirmation({ type: 'single', id: itemId, title: itemTitle });
+  };
 
+  const executeSingleDelete = async (itemId: string) => {
+    if (!user) return;
+    try {
       const { error } = await supabase
         .from("vault_items")
         .delete()
@@ -215,12 +223,7 @@ export default function VaultPage() {
 
       if (error) throw error;
 
-      setVaultItems((prev) => {
-        const next = prev.filter((item) => item.id !== itemId);
-        localStorage.setItem("ghostflow_vault_items", JSON.stringify(next));
-        return next;
-      });
-
+      setVaultItems((prev) => prev.filter((item) => item.id !== itemId));
       setSelectedIds((prev) => prev.filter((id) => id !== itemId));
       showToast("Vault item deleted successfully!", "success");
     } catch (err: any) {
@@ -247,13 +250,9 @@ export default function VaultPage() {
 
       if (error) throw error;
 
-      setVaultItems((prev) => {
-        const next = prev.map((item) =>
-          selectedIds.includes(item.id) ? { ...item, isEvergreen: targetStatus } : item
-        );
-        localStorage.setItem("ghostflow_vault_items", JSON.stringify(next));
-        return next;
-      });
+      setVaultItems((prev) => prev.map((item) =>
+        selectedIds.includes(item.id) ? { ...item, isEvergreen: targetStatus } : item
+      ));
       setSelectedIds([]);
       showToast(targetStatus ? "Assets marked as evergreen!" : "Evergreen status removed!", "success");
     } catch (err: any) {
@@ -282,18 +281,14 @@ export default function VaultPage() {
           })
       );
 
-      setVaultItems((prev) => {
-        const next = prev.map((item) => {
-          if (selectedIds.includes(item.id)) {
-            const currentTags = item.tags || [];
-            const newTags = currentTags.includes(tag as any) ? currentTags : [...currentTags, tag as any];
-            return { ...item, tags: newTags };
-          }
-          return item;
-        });
-        localStorage.setItem("ghostflow_vault_items", JSON.stringify(next));
-        return next;
-      });
+      setVaultItems((prev) => prev.map((item) => {
+        if (selectedIds.includes(item.id)) {
+          const currentTags = item.tags || [];
+          const newTags = currentTags.includes(tag as any) ? currentTags : [...currentTags, tag as any];
+          return { ...item, tags: newTags };
+        }
+        return item;
+      }));
 
       setSelectedIds([]);
       showToast(`Tag applied successfully!`, "success");
@@ -303,15 +298,16 @@ export default function VaultPage() {
     }
   };
 
-  const handleBulkDelete = async () => {
+  const handleBulkDelete = () => {
     if (!user || selectedIds.length === 0) return;
-    if (!confirm(`Are you sure you want to delete the ${selectedIds.length} selected vault items? This will also remove them from any scheduled queues.`)) return;
+    setDeleteConfirmation({ type: 'bulk' });
+  };
 
+  const executeBulkDelete = async () => {
+    if (!user || selectedIds.length === 0) return;
     showToast("Bulk unlinking and deleting assets...", "info");
 
     try {
-      // Note: files are on Cloudinary — no Supabase storage cleanup needed
-
       const { error } = await supabase
         .from("vault_items")
         .delete()
@@ -319,12 +315,7 @@ export default function VaultPage() {
 
       if (error) throw error;
 
-      setVaultItems((prev) => {
-        const next = prev.filter((item) => !selectedIds.includes(item.id));
-        localStorage.setItem("ghostflow_vault_items", JSON.stringify(next));
-        return next;
-      });
-
+      setVaultItems((prev) => prev.filter((item) => !selectedIds.includes(item.id)));
       setSelectedIds([]);
       showToast("Selected items deleted successfully!", "success");
     } catch (err: any) {
@@ -340,7 +331,13 @@ export default function VaultPage() {
     setSelectedUploadTags(item.tags);
     setIsEvergreenUpload(item.isEvergreen);
     setFileName(item.mediaUrl ? item.mediaUrl.split("/").pop() || "Existing Media" : null);
-    setPreviewUrl(item.thumbnailUrl || null);
+    setPreviewUrl(
+      item.thumbnailUrl
+        ? item.thumbnailUrl.includes("res.cloudinary.com")
+          ? `/api/media?url=${encodeURIComponent(item.thumbnailUrl.replace(/\.(mp4|mov|webm)$/i, ".jpg"))}`
+          : item.thumbnailUrl
+        : null
+    );
     setSelectedFile(null);
     setShowUploadModal(true);
   };
@@ -372,31 +369,64 @@ export default function VaultPage() {
     return true;
   });
 
+  // Infinite Scroll Observer (Issue 4)
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) {
+          setVisibleCount((prev) => prev + 24);
+        }
+      },
+      { threshold: 0.1 }
+    );
+    const trigger = document.getElementById("load-more-trigger");
+    if (trigger) observer.observe(trigger);
+    return () => observer.disconnect();
+  }, [filtered.length, visibleCount]);
+
   return (
     <motion.div
       variants={container}
       initial="hidden"
       animate="show"
-      className="space-y-6 pb-24 relative"
+      className={cn("space-y-6 pb-24 relative min-h-[80vh] transition-all duration-300", isGlobalDragging ? "bg-purple-950/10 border-2 border-dashed border-purple-500/50 rounded-3xl p-4 scale-[0.99]" : "")}
+      onDragOver={(e) => {
+        e.preventDefault();
+        setIsGlobalDragging(true);
+      }}
+      onDragLeave={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+          setIsGlobalDragging(false);
+        }
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        setIsGlobalDragging(false);
+        if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+          const file = e.dataTransfer.files[0];
+          setFileName(file.name);
+          setSelectedFile(file);
+          setUploadType(file.type.startsWith("video") ? "reel" : "photo");
+          setEditingItemId(null);
+          setCaptionText("");
+          setSelectedUploadTags([]);
+          setIsEvergreenUpload(false);
+          setShowUploadModal(true);
+        }
+      }}
     >
       {/* Header */}
       <motion.div variants={item} className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div className="space-y-1">
-          <h1 className="text-2xl md:text-3xl font-bold text-white flex items-center gap-3">
+          <h1 className="text-2xl md:text-3xl font-bold text-foreground flex items-center gap-3">
             <Archive className="h-7 w-7 text-cyan-400" />
             Content Vault
           </h1>
-          <p className="text-sm text-zinc-400">
+          <p className="text-sm text-muted-foreground">
             {vaultItems.length} items in your vault
           </p>
           
-          {/* Cloudinary Storage Badge */}
-          <div className="mt-2 inline-flex items-center gap-1.5 bg-white/[0.02] border border-white/5 rounded-xl px-3 py-1.5">
-            <Shield className="h-3 w-3 text-cyan-400" />
-            <span className="text-[10px] font-semibold text-zinc-400">Storage by</span>
-            <span className="text-[10px] font-bold text-cyan-400">Cloudinary</span>
-            <span className="text-[10px] text-zinc-600">· 25 GB free</span>
-          </div>
+
         </div>
 
         <button
@@ -455,7 +485,7 @@ export default function VaultPage() {
         </div>
 
         {/* Tag Filters */}
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex overflow-x-auto whitespace-nowrap hide-scrollbar items-center gap-2 pb-2">
           <Tag className="h-4 w-4 text-zinc-500" />
           {tagFilters.map((tag) => (
             <button
@@ -509,13 +539,14 @@ export default function VaultPage() {
 
       {/* Media Grid */}
       {filtered.length > 0 ? (
-        <motion.div
-          variants={container}
-          initial="hidden"
-          animate="show"
-          className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"
-        >
-          {filtered.map((vault) => {
+        <>
+          <motion.div
+            variants={container}
+            initial="hidden"
+            animate="show"
+            className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"
+          >
+            {filtered.slice(0, visibleCount).map((vault) => {
             const TypeIcon = typeIcons[vault.type] || ImageIcon;
             const isSelected = selectedIds.includes(vault.id);
             return (
@@ -530,16 +561,20 @@ export default function VaultPage() {
                 onClick={(e) => toggleSelectCard(vault.id, e)}
               >
                 {/* Select Checkbox Indicator */}
-                <div 
+                <button
+                  type="button"
+                  role="checkbox"
+                  aria-checked={isSelected}
+                  onClick={(e) => toggleSelectCard(vault.id, e)}
                   className={cn(
                     "absolute top-2 left-2 z-10 flex h-6 w-6 items-center justify-center rounded-md border backdrop-blur-sm transition-all duration-200 cursor-pointer select-none",
                     isSelected
                       ? "bg-violet-600 border-violet-500 text-white shadow-lg shadow-violet-500/20 scale-105"
-                      : "bg-black/40 border-white/20 text-transparent hover:border-white/50 opacity-0 group-hover:opacity-100"
+                      : "bg-black/40 border-white/20 text-transparent hover:border-white/50 opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
                   )}
                 >
                   <Check className={cn("h-3.5 w-3.5 transition-opacity", isSelected ? "opacity-100" : "opacity-0")} />
-                </div>
+                </button>
 
                 {/* Thumbnail */}
                 <div className="relative aspect-square overflow-hidden">
@@ -548,7 +583,11 @@ export default function VaultPage() {
                     style={
                       vault.thumbnailUrl
                         ? {
-                            backgroundImage: `url(${vault.thumbnailUrl})`,
+                            backgroundImage: `url(${
+                              vault.thumbnailUrl.includes("res.cloudinary.com")
+                                ? `/api/media?url=${encodeURIComponent(vault.thumbnailUrl.replace(/\.(mp4|mov|webm)$/i, ".jpg"))}`
+                                : vault.thumbnailUrl
+                            })`,
                             backgroundSize: "cover",
                             backgroundPosition: "center",
                           }
@@ -594,7 +633,7 @@ export default function VaultPage() {
                 {/* Content info card */}
                 <div className="p-3 bg-[#0B0A12]/40 border-t border-white/[0.04]">
                   <div className="flex items-center justify-between gap-2">
-                    <h3 className="text-sm font-semibold text-white truncate flex-1">{formatTitle(vault.title)}</h3>
+                    <h3 className="text-sm font-semibold text-foreground truncate flex-1">{formatTitle(vault.title)}</h3>
                     <div className="flex items-center gap-1 shrink-0 opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity duration-200" onClick={(e) => e.stopPropagation()}>
                       <button
                         onClick={() => handleEditClick(vault)}
@@ -604,7 +643,7 @@ export default function VaultPage() {
                         <Edit2 className="h-3.5 w-3.5" />
                       </button>
                       <button
-                        onClick={() => handleDeleteClick(vault.id)}
+                        onClick={() => handleDeleteClick(vault.id, vault.title)}
                         className="p-1 text-zinc-400 hover:text-red-400 hover:bg-white/5 rounded transition-colors cursor-pointer"
                         title="Delete Item"
                       >
@@ -612,7 +651,16 @@ export default function VaultPage() {
                       </button>
                     </div>
                   </div>
-                  <p className="mt-1 text-xs text-zinc-400 line-clamp-2 leading-relaxed">{vault.caption}</p>
+                  <p 
+                    className="mt-1 text-xs text-zinc-400 line-clamp-2 leading-relaxed cursor-pointer hover:text-zinc-300 transition-colors"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setExpandedCaptionId(vault.id);
+                    }}
+                    title="Click to read full caption"
+                  >
+                    {vault.caption}
+                  </p>
 
                   {/* Tags */}
                   {vault.tags.length > 0 && (
@@ -644,6 +692,12 @@ export default function VaultPage() {
             );
           })}
         </motion.div>
+        {visibleCount < filtered.length && (
+          <div id="load-more-trigger" className="h-10 w-full flex items-center justify-center py-8">
+            <Loader2 className="h-5 w-5 text-violet-500 animate-spin" />
+          </div>
+        )}
+        </>
       ) : (
         <motion.div
           initial={{ opacity: 0 }}
@@ -653,8 +707,8 @@ export default function VaultPage() {
           <div className="flex h-16 w-16 items-center justify-center rounded-full bg-white/5 mb-4">
             <Archive className="h-8 w-8 text-zinc-600" />
           </div>
-          <h3 className="text-lg font-semibold text-white">No items found</h3>
-          <p className="mt-1 text-sm text-zinc-400">
+          <h3 className="text-lg font-semibold text-foreground">No items found</h3>
+          <p className="mt-1 text-sm text-muted-foreground">
             Try adjusting your filters or search terms
           </p>
         </motion.div>
@@ -762,7 +816,7 @@ export default function VaultPage() {
                 {/* Header */}
                 <div className="p-6 pb-4 border-b border-white/[0.04] flex items-center justify-between shrink-0">
                   <div>
-                    <h2 className="text-xl font-bold text-white tracking-tight">
+                    <h2 className="text-xl font-bold text-foreground tracking-tight">
                       {editingItemId ? "Edit Vault Item" : "Add to Vault"}
                     </h2>
                     <p className="text-xs text-zinc-500 mt-0.5">Upload and organize assets for automated social media reposting.</p>
@@ -772,6 +826,7 @@ export default function VaultPage() {
                       setEditingItemId(null);
                       setShowUploadModal(false);
                     }}
+                    aria-label="Close upload modal"
                     className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/5 border border-white/5 text-zinc-400 hover:text-white hover:bg-white/10 hover:border-white/10 shadow-[0_0_0_rgba(168,85,247,0)] hover:shadow-[0_0_15px_rgba(168,85,247,0.35)] transition-all duration-300"
                   >
                     <X className="h-4.5 w-4.5" />
@@ -1071,6 +1126,15 @@ export default function VaultPage() {
                         ? (captionText.slice(0, 30) || "Untitled Caption") 
                         : (fileName ? fileName.split(".")[0] : `New ${uploadType === "photo" ? "Image" : uploadType}`);
 
+                      if (captionText && captionText.length > 2200) {
+                        showToast("Caption exceeds Instagram's 2,200 character limit.", "error");
+                        return;
+                      }
+                      if (newTitle.length > 100) {
+                        showToast("Title is too long.", "error");
+                        return;
+                      }
+
                       if (vaultType !== "caption" && !selectedFile && !editingItemId) {
                         showToast("Please select a file to upload", "error");
                         return;
@@ -1090,11 +1154,11 @@ export default function VaultPage() {
                           // Upload to Cloudinary (25 GB free, permanent CDN URLs)
                           const formData = new FormData();
                           formData.append("file", selectedFile);
-                          formData.append("upload_preset", "ghostal");
+                          formData.append("upload_preset", process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET || "ghostal");
                           formData.append("folder", `ghostal/${user.id}`);
 
                           const cloudRes = await fetch(
-                            "https://api.cloudinary.com/v1_1/da8jrztp0/auto/upload",
+                            "/api/vault/upload",
                             { method: "POST", body: formData }
                           );
 
@@ -1144,11 +1208,18 @@ export default function VaultPage() {
                             };
                             setVaultItems((prev) => {
                               const next = prev.map((item) => (item.id === editingItemId ? updatedItem : item));
-                              localStorage.setItem("ghostflow_vault_items", JSON.stringify(next));
                               return next;
                             });
                           }
                         } else {
+                          // Enforce vault item limit based on plan
+                          if (vaultItems.length >= limits.vaultItems) {
+                            showToast(
+                              `Your plan allows up to ${limits.vaultItems} vault items. Upgrade to add more.`,
+                              "error"
+                            );
+                            return;
+                          }
                           // Insert new item
                           const { data, error } = await supabase
                             .from("vault_items")
@@ -1187,7 +1258,6 @@ export default function VaultPage() {
                             };
                             setVaultItems((prev) => {
                               const next = [newItem, ...prev];
-                              localStorage.setItem("ghostflow_vault_items", JSON.stringify(next));
                               return next;
                             });
                           }
@@ -1236,6 +1306,37 @@ export default function VaultPage() {
         )}
       </AnimatePresence>
 
+      {/* Caption Expansion Modal */}
+      <AnimatePresence>
+        {expandedCaptionId && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-[#07070a]/80 backdrop-blur-md"
+              onClick={() => setExpandedCaptionId(null)}
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="w-full max-w-md bg-[#0B0A12] border border-white/10 rounded-2xl shadow-2xl p-6 relative z-10 max-h-[80vh] flex flex-col"
+            >
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="font-semibold text-foreground">Full Caption</h3>
+                <button onClick={() => setExpandedCaptionId(null)} className="p-1 text-zinc-400 hover:text-white bg-white/5 rounded-md cursor-pointer transition-colors">
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="overflow-y-auto text-sm text-zinc-300 whitespace-pre-wrap leading-relaxed pr-2 custom-scrollbar">
+                {vaultItems.find(v => v.id === expandedCaptionId)?.caption}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* Dynamic Floating Toast */}
       <AnimatePresence>
         {toast && (
@@ -1259,6 +1360,62 @@ export default function VaultPage() {
             )}
             <span className="flex-1 truncate">{toast.message}</span>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Premium Delete Confirmation Modal */}
+      <AnimatePresence>
+        {deleteConfirmation && (
+          <div className="fixed inset-0 z-[300] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-[#07070a]/80 backdrop-blur-md"
+              onClick={() => setDeleteConfirmation(null)}
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="w-full max-w-md bg-[#0B0A12] border border-red-500/20 rounded-2xl shadow-2xl p-6 relative z-10 flex flex-col"
+            >
+              <div className="flex items-center gap-3 mb-4">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-red-500/10 shrink-0">
+                  <Trash2 className="h-5 w-5 text-red-400" />
+                </div>
+                <h3 className="font-bold text-lg text-foreground">
+                  {deleteConfirmation.type === 'bulk' 
+                    ? `Delete ${selectedIds.length} Vault Items?` 
+                    : 'Delete Vault Item?'}
+                </h3>
+              </div>
+              <p className="text-muted-foreground mb-6 leading-relaxed text-sm">
+                Are you absolutely sure you want to delete <strong className="text-white">{deleteConfirmation.type === 'single' ? formatTitle(deleteConfirmation.title) : 'these items'}</strong>? This action cannot be undone. This will permanently remove the item{deleteConfirmation.type === 'bulk' ? 's' : ''} from your vault and also instantly unlink {deleteConfirmation.type === 'bulk' ? 'them' : 'it'} from any future scheduled posts.
+              </p>
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={() => setDeleteConfirmation(null)}
+                  className="px-4 py-2.5 rounded-lg bg-white/5 hover:bg-white/10 text-white font-medium transition-colors cursor-pointer active:scale-95"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    if (deleteConfirmation.type === 'bulk') {
+                      executeBulkDelete();
+                    } else {
+                      executeSingleDelete(deleteConfirmation.id);
+                    }
+                    setDeleteConfirmation(null);
+                  }}
+                  className="px-4 py-2.5 rounded-lg bg-red-500 hover:bg-red-600 text-white font-bold shadow-[0_0_15px_rgba(239,68,68,0.3)] transition-colors cursor-pointer active:scale-95"
+                >
+                  Yes, Delete
+                </button>
+              </div>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
     </motion.div>

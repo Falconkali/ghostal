@@ -1,4 +1,6 @@
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@100..900&family=JetBrains+Mono:wght@400;500;600;700&display=swap");
+/* Inter is loaded via next/font in layout.tsx — no @import needed */
+/* JetBrains Mono kept for --font-geist-mono (code blocks) */
+@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap");
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
 
@@ -63,7 +65,19 @@
   --ghost-cyan: #22d3ee;
   --success: #22c55e;
   --warning: #f59e0b;
+
+  /* Glass surfaces — dark */
+  --glass-bg: rgba(18, 18, 26, 0.7);
+  --glass-border: rgba(255, 255, 255, 0.06);
+  --glass-stat-bg: rgba(20, 20, 32, 0.88);
+  --glass-stat-border: rgba(255, 255, 255, 0.07);
+  --glass-metric-bg: rgba(13, 13, 20, 0.65);
+  --glass-metric-border: rgba(255, 255, 255, 0.04);
+  --glass-strong-bg: rgba(18, 18, 26, 0.85);
+  --glass-strong-border: rgba(255, 255, 255, 0.08);
+  --page-glow: rgba(139, 92, 246, 0.08);
 }
+
 
 /* ============================================
    Global Styles
@@ -74,11 +88,12 @@
 }
 
 body {
-  background: var(--background);
+  background: radial-gradient(ellipse 80% 40% at 50% -20%, var(--page-glow) 0%, transparent 70%), var(--background);
   color: var(--foreground);
   font-family: var(--font-sans), system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  transition: background-color 0.3s ease, color 0.3s ease;
 }
 
 /* ============================================
@@ -117,14 +132,9 @@ body {
    ============================================ */
 
 @keyframes glow-pulse {
-  0%, 100% {
-    opacity: 0.4;
-    filter: blur(40px);
-  }
-  50% {
-    opacity: 0.8;
-    filter: blur(60px);
-  }
+  /* Only animate opacity — filter:blur causes repaint every frame */
+  0%, 100% { opacity: 0.4; }
+  50%       { opacity: 0.75; }
 }
 
 @keyframes float {
@@ -189,10 +199,12 @@ body {
 
 .animate-float {
   animation: float 3s ease-in-out infinite;
+  will-change: transform;
 }
 
 .animate-float-slow {
   animation: float-slow 6s ease-in-out infinite;
+  will-change: transform;
 }
 
 .animate-shimmer {
@@ -209,22 +221,69 @@ body {
   animation: border-glow 3s ease-in-out infinite;
 }
 
+/* Respect user's reduced-motion preference */
+@media (prefers-reduced-motion: reduce) {
+  .animate-glow-pulse,
+  .animate-float,
+  .animate-float-slow,
+  .animate-shimmer,
+  .animate-gradient,
+  .animate-border-glow,
+  .animated-border::before {
+    animation: none !important;
+  }
+}
+
 /* ============================================
    Glass Morphism
    ============================================ */
 
 .glass {
-  background: rgba(18, 18, 26, 0.7);
+  background: var(--glass-bg);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--glass-border);
+  transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease, background-color 0.3s ease;
+}
+
+.glass:hover {
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.15);
 }
 
 .glass-strong {
-  background: rgba(18, 18, 26, 0.85);
+  background: var(--glass-strong-bg);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--glass-strong-border);
+  transition: background-color 0.3s ease;
+}
+
+/* Primary stat card — elevated surface, lifts 3px on hover */
+.glass-stat {
+  background: var(--glass-stat-bg);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--glass-stat-border);
+  transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease, background-color 0.3s ease;
+}
+
+.glass-stat:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.2);
+}
+
+/* Secondary metric strip — recessed / muted surface */
+.glass-metric {
+  background: var(--glass-metric-bg);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--glass-metric-border);
+  transition: transform 0.2s ease, box-shadow 0.2s ease, background-color 0.3s ease;
+}
+
+.glass-metric:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
 }
 
 /* ============================================
@@ -297,9 +356,16 @@ body {
     #06b6d4,
     transparent
   );
-  animation: gradient-shift 4s linear infinite;
+  /* Use transform:rotate (compositor-only) instead of background-position (paint) */
+  animation: spin 4s linear infinite;
   border-radius: inherit;
   z-index: -1;
+  will-change: transform;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
 }
 
 .animated-border::after {
@@ -331,6 +397,7 @@ body {
 }
 
 @media (min-width: 768px) {
+  /* Use transform instead of margin-left/left — stays on compositor thread */
   .md-ml-sidebar {
     margin-left: 14rem;
     transition: margin-left 0.3s ease-in-out;
@@ -350,4 +417,56 @@ body {
     left: 4rem;
     transition: left 0.3s ease-in-out;
   }
+}
+
+/* ============================================
+   Aurora Borealis Moving Wave Animations
+   ============================================ */
+
+@keyframes aurora-moving-wave {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+@keyframes wave-float {
+  0%, 100% {
+    transform: translateY(0px) scale(1) rotate(0deg);
+  }
+  33% {
+    transform: translateY(-6px) scale(1.12) rotate(4deg);
+  }
+  66% {
+    transform: translateY(5px) scale(0.94) rotate(-4deg);
+  }
+}
+
+.aurora-wave-bg {
+  background: linear-gradient(
+    -45deg,
+    #0d0722 0%,
+    #2e1065 22%,
+    #7c3aed 45%,
+    #0284c7 68%,
+    #8b5cf6 88%,
+    #0d0722 100%
+  );
+  background-size: 280% 280%;
+  animation: aurora-moving-wave 7s ease infinite;
+}
+
+.aurora-ribbon-1 {
+  animation: wave-float 6s ease-in-out infinite;
+  will-change: transform;
+}
+
+.aurora-ribbon-2 {
+  animation: wave-float 9s ease-in-out infinite reverse;
+  will-change: transform;
 }

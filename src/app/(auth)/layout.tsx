@@ -1,7 +1,11 @@
 "use client";
 
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/hooks/use-auth";
+import { Loader2 } from "lucide-react";
+import Image from "next/image";
 import { motion } from "framer-motion";
-import { Ghost } from "lucide-react";
 import Link from "next/link";
 
 export default function AuthLayout({
@@ -9,6 +13,24 @@ export default function AuthLayout({
 }: {
   children: React.ReactNode;
 }) {
+  const { user, isLoading } = useAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!isLoading && user) {
+      router.replace("/dashboard");
+    }
+  }, [user, isLoading, router]);
+
+  if (isLoading || user) {
+    return (
+      <div className="min-h-screen bg-[#09090f] flex flex-col items-center justify-center gap-3">
+        <Loader2 className="h-8 w-8 text-violet-500 animate-spin" />
+        <p className="text-sm text-zinc-400 font-medium">Redirecting...</p>
+      </div>
+    );
+  }
+
   return (
     <div className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-[#09090f] px-4 py-8">
       {/* ——— Animated gradient blobs ——— */}
@@ -55,13 +77,8 @@ export default function AuthLayout({
           href="/"
           className="flex items-center gap-2 text-white transition-opacity hover:opacity-80"
         >
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-cyan-500 shadow-lg shadow-violet-500/25">
-            <Ghost className="h-5 w-5 text-white" />
-          </div>
-          <span className="text-xl font-bold tracking-tight">
-            <span className="gradient-text">Ghost</span>
-            <span className="text-white">Flow</span>
-          </span>
+          <Image src="/logo.png" alt="Ghostal" width={40} height={40} className="object-contain rounded-xl" />
+          <span className="text-xl font-bold tracking-tight gradient-text">Ghostal</span>
         </Link>
       </motion.div>
 
@@ -75,7 +92,7 @@ export default function AuthLayout({
         transition={{ delay: 0.8, duration: 0.5 }}
         className="relative z-10 mt-8 text-center text-xs text-white/30"
       >
-        © {new Date().getFullYear()} GhostFlow. All rights reserved.
+        © {new Date().getFullYear()} Ghostal. All rights reserved.
       </motion.p>
     </div>
   );

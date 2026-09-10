@@ -15,13 +15,13 @@ const colors = [
 
 const releases = [
   {
-    title: "GhostFlow Announces $4.5M Seed Round to Solve Creator Burnout",
+    title: "Ghostal Announces $4.5M Seed Round to Solve Creator Burnout",
     date: "April 21, 2026",
     link: "#",
     excerpt: "Funding led by Horizon Ventures will accelerate developer hiring and research into offline continuity models.",
   },
   {
-    title: "GhostFlow Launches the Creator Health Initiative to Foster Sustainable Social Growth",
+    title: "Ghostal Launches the Creator Health Initiative to Foster Sustainable Social Growth",
     date: "March 15, 2026",
     link: "#",
     excerpt: "New pledge offers mental health stipends and educational guides to full-time creators taking extended offline breaks.",
@@ -176,10 +176,10 @@ export default function PressKitPage() {
             </p>
             <a
               id="press-email"
-              href="mailto:press@ghostflow.ai"
+              href="mailto:support@ghostal.xyz"
               className="text-lg font-semibold text-violet-400 hover:text-violet-300 transition-colors"
             >
-              press@ghostflow.ai
+              support@ghostal.xyz
             </a>
           </div>
         </section>

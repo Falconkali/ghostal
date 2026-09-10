@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Calendar,
@@ -25,14 +25,13 @@ import {
   Bell,
   Shield,
   Loader2,
+  Search,
 } from "lucide-react";
 import { cn, formatTitle } from "@/lib/utils";
-import { mockScheduledPosts, mockVaultItems } from "@/lib/mock-data";
 import { useAuth } from "@/hooks/use-auth";
 import IntegrationRequired from "@/components/dashboard/integration-required";
 import type { ScheduledPost, VaultItem, VaultTag } from "@/types";
 import { supabase } from "@/lib/supabase";
-import { decrypt } from "@/lib/crypto";
 
 const container = {
   hidden: { opacity: 0 },
@@ -64,24 +63,90 @@ const HOURS = [
   "14:00", "16:00", "18:00", "20:00",
 ];
 
-// Helper to calculate Monday of the current active local week
-const getTodayWeekStart = () => {
-  const d = new Date();
-  const day = d.getDay(); // 0 Sunday, 1 Monday, ...
-  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-  const mon = new Date(d.setDate(diff));
-  mon.setHours(0, 0, 0, 0);
-  return mon;
-};
+// Helper to parse local date/time in a specific timezone to UTC Date
+function parseZonedTime(dateStr: string, timeStr: string, tz: string): Date {
+  const guess = new Date(`${dateStr}T${timeStr}:00`);
+  if (isNaN(guess.getTime())) return new Date();
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+  });
+  const parts = formatter.formatToParts(guess);
+  const p: Record<string, string> = {};
+  for (const { type, value } of parts) p[type] = value;
+  const targetStr = `${p.year}-${p.month}-${p.day}T${p.hour === '24' ? '00' : p.hour}:${p.minute}:00`;
+  const offsetDiff = guess.getTime() - new Date(targetStr).getTime();
+  return new Date(guess.getTime() + offsetDiff);
+}
+
+// Helper to format a UTC Date into local strings for a specific timezone
+function formatZonedTime(date: Date, tz: string) {
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+  });
+  const parts = formatter.formatToParts(date);
+  const p: Record<string, string> = {};
+  for (const { type, value } of parts) p[type] = value;
+  const hour = p.hour === '24' ? '00' : p.hour;
+  return {
+    dateStr: `${p.year}-${p.month}-${p.day}`,
+    timeStr: `${hour}:${p.minute}`,
+    hourStr: `${hour}:00`,
+    year: parseInt(p.year, 10), month: parseInt(p.month, 10) - 1, date: parseInt(p.day, 10)
+  };
+}
 
 export default function SchedulerPage() {
   const { instagramConnected, user } = useAuth();
   const [view, setView] = useState<"calendar" | "list">("calendar");
 
+  // Hydration State
+  const [mounted, setMounted] = useState(false);
+
+  // Timezone State
+  const [timezone, setTimezone] = useState<string>("UTC");
+  const [availableTimezones, setAvailableTimezones] = useState<string[]>([]);
+
+  useEffect(() => {
+    try {
+      if (typeof Intl.supportedValuesOf === "function") {
+        setAvailableTimezones(Intl.supportedValuesOf("timeZone"));
+      } else {
+        setAvailableTimezones(["UTC", "America/New_York", "Europe/London", "Asia/Tokyo"]);
+      }
+      const savedTz = localStorage.getItem("Ghostal_timezone");
+      if (savedTz) {
+        setTimezone(savedTz);
+      } else {
+        const sysTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        setTimezone(sysTz || "UTC");
+      }
+    } catch {
+      setTimezone("UTC");
+    }
+    setMounted(true);
+  }, []);
+
+  const handleTimezoneChange = (tz: string) => {
+    setTimezone(tz);
+    localStorage.setItem("Ghostal_timezone", tz);
+  };
+
   // Persistent States
   const [scheduledPosts, setScheduledPosts] = useState<ScheduledPost[]>([]);
   const [vaultItems, setVaultItems] = useState<VaultItem[]>([]);
   const [isDbLoading, setIsDbLoading] = useState(true);
+
+  // Bulk Selection State
+  const [selectedPostIds, setSelectedPostIds] = useState<string[]>([]);
+
+  const toggleSelectPost = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSelectedPostIds((prev) =>
+      prev.includes(id) ? prev.filter((pid) => pid !== id) : [...prev, id]
+    );
+  };
 
   // Dynamic drag drop states & toasts
   const [draggedOverCell, setDraggedOverCell] = useState<string | null>(null);
@@ -122,7 +187,7 @@ export default function SchedulerPage() {
           isEvergreen: d.is_evergreen || false,
         }));
         setVaultItems(mappedVault);
-        localStorage.setItem("ghostflow_vault_items", JSON.stringify(mappedVault));
+        localStorage.setItem("Ghostal_vault_items", JSON.stringify(mappedVault));
       }
 
       // 2. Fetch Scheduled Posts
@@ -134,7 +199,7 @@ export default function SchedulerPage() {
 
       if (sError) {
         console.error("Error fetching scheduled posts:", sError);
-      } else if (sData && sData.length > 0) {
+      } else if (sData) {
         const mappedScheduled: ScheduledPost[] = sData.map((d: any) => ({
           id: d.id,
           vaultItemId: d.vault_item_id || "",
@@ -147,63 +212,9 @@ export default function SchedulerPage() {
           thumbnailUrl: d.thumbnail_url || undefined,
         }));
         setScheduledPosts(mappedScheduled);
-        localStorage.setItem("ghostflow_scheduled_posts", JSON.stringify(mappedScheduled));
-      } else {
-        // Seed scheduled posts dynamically shifted to current active week so they appear on mount!
-        const mon = getTodayWeekStart();
-        const shiftedMockPosts = mockScheduledPosts.map((post, index) => {
-          const targetDate = new Date(mon);
-          // Stagger posts across Mon (0), Wed (2), Fri (4)
-          const dayOffset = (index % 3) * 2;
-          targetDate.setDate(mon.getDate() + dayOffset);
-          
-          // Stagger hours (9:00 AM, 12:00 PM, 6:00 PM)
-          const hours = [9, 12, 18];
-          targetDate.setHours(hours[index % 3], 0, 0, 0);
-
-          return {
-            user_id: user.id,
-            caption: post.caption,
-            hashtags: post.hashtags,
-            scheduled_at: targetDate.toISOString(),
-            status: post.status,
-            type: post.type,
-            thumbnail_url: post.thumbnailUrl,
-          };
-        });
-
-        const { error: seedError } = await supabase
-          .from("scheduled_posts")
-          .insert(shiftedMockPosts);
-
-        if (seedError) {
-          console.error("Error seeding mock scheduled posts:", seedError);
-          setScheduledPosts(mockScheduledPosts);
-        } else {
-          // Re-fetch to get correct assigned DB UUIDs
-          const { data: refetched } = await supabase
-            .from("scheduled_posts")
-            .select("*")
-            .eq("user_id", user.id)
-            .order("scheduled_at", { ascending: true });
-          
-          if (refetched) {
-            const mapped = refetched.map((d: any) => ({
-              id: d.id,
-              vaultItemId: d.vault_item_id || "",
-              caption: d.caption || "",
-              hashtags: d.hashtags || [],
-              firstComment: d.first_comment || undefined,
-              scheduledAt: d.scheduled_at,
-              status: d.status as any,
-              type: d.type as any,
-              thumbnailUrl: d.thumbnail_url || undefined,
-            }));
-            setScheduledPosts(mapped);
-            localStorage.setItem("ghostflow_scheduled_posts", JSON.stringify(mapped));
-          }
-        }
+        localStorage.setItem("Ghostal_scheduled_posts", JSON.stringify(mappedScheduled));
       }
+      // No posts yet — show empty calendar, do NOT seed mock data
     } catch (e) {
       console.error(e);
     } finally {
@@ -248,7 +259,6 @@ export default function SchedulerPage() {
           filter: `user_id=eq.${user.id}`,
         },
         (payload) => {
-          console.log("Realtime scheduler database update received:", payload);
           fetchData();
         }
       )
@@ -262,7 +272,7 @@ export default function SchedulerPage() {
   // Load vault items from localstorage if updated elsewhere
   useEffect(() => {
     const handleStorageChange = () => {
-      const saved = localStorage.getItem("ghostflow_vault_items");
+      const saved = localStorage.getItem("Ghostal_vault_items");
       if (saved) {
         try {
           setVaultItems(JSON.parse(saved));
@@ -277,7 +287,7 @@ export default function SchedulerPage() {
 
   useEffect(() => {
     if (scheduledPosts.length > 0) {
-      localStorage.setItem("ghostflow_scheduled_posts", JSON.stringify(scheduledPosts));
+      localStorage.setItem("Ghostal_scheduled_posts", JSON.stringify(scheduledPosts));
     }
   }, [scheduledPosts]);
 
@@ -294,10 +304,12 @@ export default function SchedulerPage() {
   const [customFirstComment, setCustomFirstComment] = useState("");
   const [editingPostId, setEditingPostId] = useState<string | null>(null);
   const [modalError, setModalError] = useState<string | null>(null);
+  const [vaultSearchQuery, setVaultSearchQuery] = useState("");
 
   useEffect(() => {
     if (!showNewPostModal) {
       setModalError(null);
+      setVaultSearchQuery("");
     }
   }, [showNewPostModal]);
 
@@ -339,16 +351,14 @@ export default function SchedulerPage() {
     const postId = e.dataTransfer.getData("text/plain");
     if (!postId) return;
 
-    // Calculate target date & hour
     const days = getWeekDays();
+    if (days.length === 0) return;
     const targetDate = days[dayIdx];
-    const [hStr, mStr] = hour.split(":");
     
-    const newScheduledAt = new Date(targetDate);
-    newScheduledAt.setHours(parseInt(hStr), parseInt(mStr) || 0, 0, 0);
+    const utcDate = parseZonedTime(formatDateInput(targetDate), hour, timezone);
 
     // Block rescheduling to past slots
-    if (newScheduledAt < new Date()) {
+    if (utcDate < new Date()) {
       showToast("Cannot reschedule posts to the past.", "error");
       return;
     }
@@ -358,16 +368,16 @@ export default function SchedulerPage() {
     try {
       const { error } = await supabase
         .from("scheduled_posts")
-        .update({ scheduled_at: newScheduledAt.toISOString() })
+        .update({ scheduled_at: utcDate.toISOString() })
         .eq("id", postId);
 
       if (error) throw error;
 
       setScheduledPosts((prev) => {
         const next = prev.map((p) =>
-          p.id === postId ? { ...p, scheduledAt: newScheduledAt.toISOString() } : p
+          p.id === postId ? { ...p, scheduledAt: utcDate.toISOString() } : p
         );
-        localStorage.setItem("ghostflow_scheduled_posts", JSON.stringify(next));
+        localStorage.setItem("Ghostal_scheduled_posts", JSON.stringify(next));
         return next;
       });
 
@@ -378,6 +388,82 @@ export default function SchedulerPage() {
     }
   };
 
+  // Date math helper functions
+  const getWeekDays = useCallback(() => {
+    if (!timezone) return [];
+    // Get current time formatted in selected timezone
+    const zonedNow = formatZonedTime(new Date(), timezone);
+    // Create a local Date object representing the zoned time
+    const zonedLocalDate = new Date(zonedNow.year, zonedNow.month, zonedNow.date);
+    
+    // Find Monday
+    const day = zonedLocalDate.getDay();
+    const diff = zonedLocalDate.getDate() - day + (day === 0 ? -6 : 1);
+    
+    // Create start of week date
+    const startOfWeek = new Date(zonedLocalDate);
+    startOfWeek.setDate(diff);
+    startOfWeek.setHours(0, 0, 0, 0);
+    startOfWeek.setDate(startOfWeek.getDate() + weekOffset * 7);
+
+    const days: Date[] = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(startOfWeek);
+      d.setDate(startOfWeek.getDate() + i);
+      days.push(d);
+    }
+    return days;
+  }, [timezone, weekOffset]);
+
+  // O(1) Dictionary for Grid Rendering
+  const postsBySlot = useMemo(() => {
+    const dict: Record<string, ScheduledPost[]> = {};
+    if (scheduledPosts.length === 0) return dict;
+    
+    const days = getWeekDays();
+    if (days.length === 0) return dict;
+
+    scheduledPosts.forEach((p) => {
+      const zonedPost = formatZonedTime(new Date(p.scheduledAt), timezone);
+      
+      let matchDayIdx = -1;
+      for (let i = 0; i < days.length; i++) {
+        const d = days[i];
+        if (zonedPost.year === d.getFullYear() && zonedPost.month === d.getMonth() && zonedPost.date === d.getDate()) {
+          matchDayIdx = i;
+          break;
+        }
+      }
+      
+      if (matchDayIdx === -1) return;
+      
+      const postHourNum = parseInt(zonedPost.hourStr.split(":")[0], 10);
+      let closestHour = HOURS[0];
+      let minDiff = Infinity;
+      for (const h of HOURS) {
+        const hNum = parseInt(h.split(":")[0], 10);
+        const diff = Math.abs(hNum - postHourNum);
+        if (diff < minDiff) {
+          minDiff = diff;
+          closestHour = h;
+        }
+      }
+      
+      const key = `${matchDayIdx}-${closestHour}`;
+      if (!dict[key]) dict[key] = [];
+      dict[key].push(p);
+    });
+    return dict;
+  }, [scheduledPosts, timezone, getWeekDays]);
+
+  if (!mounted) {
+    return (
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <Loader2 className="h-8 w-8 text-violet-500 animate-spin" />
+      </div>
+    );
+  }
+
   if (!instagramConnected) {
     return (
       <IntegrationRequired
@@ -387,26 +473,9 @@ export default function SchedulerPage() {
     );
   }
 
-  // Date math helper functions
-  const getWeekStartDate = () => {
-    const d = getTodayWeekStart();
-    d.setDate(d.getDate() + weekOffset * 7);
-    return d;
-  };
-
-  const getWeekDays = () => {
-    const start = getWeekStartDate();
-    const days: Date[] = [];
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(start);
-      d.setDate(start.getDate() + i);
-      days.push(d);
-    }
-    return days;
-  };
-
   const formatWeekRange = () => {
     const days = getWeekDays();
+    if (days.length === 0) return "";
     const start = days[0];
     const end = days[6];
     
@@ -419,35 +488,6 @@ export default function SchedulerPage() {
     return `${startMonth} ${startDay} – ${endMonth} ${endDay}, ${endYear}`;
   };
 
-  const getPostsForDayHour = (dayIndex: number, hour: string) => {
-    const days = getWeekDays();
-    const targetDate = days[dayIndex];
-    return scheduledPosts.filter((p) => {
-      const postDate = new Date(p.scheduledAt);
-      
-      const dateMatches = 
-        postDate.getFullYear() === targetDate.getFullYear() &&
-        postDate.getMonth() === targetDate.getMonth() &&
-        postDate.getDate() === targetDate.getDate();
-        
-      if (!dateMatches) return false;
-      
-      const postHourNum = postDate.getHours();
-      // Find the closest hour in the HOURS array so dynamic/off-grid times are grouped into grid rows gracefully
-      let closestHour = HOURS[0];
-      let minDiff = Infinity;
-      for (const h of HOURS) {
-        const hNum = parseInt(h.split(":")[0]);
-        const diff = Math.abs(hNum - postHourNum);
-        if (diff < minDiff) {
-          minDiff = diff;
-          closestHour = h;
-        }
-      }
-      return closestHour === hour;
-    });
-  };
-
   const formatDateInput = (d: Date) => {
     const year = d.getFullYear();
     const month = (d.getMonth() + 1).toString().padStart(2, "0");
@@ -458,6 +498,7 @@ export default function SchedulerPage() {
   // Click handlers
   const handleGridCellClick = (dayIndex: number, hour: string) => {
     const days = getWeekDays();
+    if (days.length === 0) return;
     const targetDate = days[dayIndex];
     
     setEditingPostId(null);
@@ -481,6 +522,7 @@ export default function SchedulerPage() {
     const hourFormatted = `${hourNum.toString().padStart(2, "0")}:00`;
 
     const days = getWeekDays();
+    if (days.length === 0) return;
     const targetDate = days[dayIndex >= 0 ? dayIndex : 0];
     
     setEditingPostId(null);
@@ -497,194 +539,45 @@ export default function SchedulerPage() {
     if (!user) return;
     showToast("Publishing post to Instagram...", "info");
     try {
-      // Get post details
       const post = scheduledPosts.find(p => p.id === postId);
       if (!post) throw new Error("Post not found");
 
-      // Fetch instagram credentials and vault media
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("instagram_token, instagram_id")
-        .eq("id", user.id)
-        .single();
-
-      let mediaUrl = "";
-      if (post.vaultItemId) {
-        const { data: vaultItem } = await supabase
-          .from("vault_items")
-          .select("media_url, media_type")
-          .eq("id", post.vaultItemId)
-          .single();
-        if (vaultItem) mediaUrl = vaultItem.media_url || "";
-      }
-
-      let published = false;
-      let realErrorMessage = "";
-
-      const decryptedToken = profile?.instagram_token ? decrypt(profile.instagram_token) : "";
-
-      if (decryptedToken && profile?.instagram_id && mediaUrl) {
-        const containerParams: Record<string, string> = {
-          caption: post.caption,
-          access_token: decryptedToken,
-        };
-        if (post.type === "reel") {
-          containerParams.media_type = "REELS";
-          containerParams.video_url = mediaUrl;
-        } else {
-          containerParams.image_url = mediaUrl;
-        }
-
-        const containerRes = await fetch(
-          `https://graph.instagram.com/v21.0/${profile.instagram_id}/media`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
-            body: new URLSearchParams(containerParams),
-          }
-        );
-        const containerData = await containerRes.json();
-        console.log("Instagram container response:", JSON.stringify(containerData));
-
-        if (containerData.error) {
-          const errMsg = containerData.error.message || "";
-          const isSandboxOnlyError = 
-            errMsg.toLowerCase().includes("app is in development mode") ||
-            errMsg.toLowerCase().includes("does not have permission to publish") ||
-            errMsg.toLowerCase().includes("app review") ||
-            errMsg.toLowerCase().includes("submit for review") ||
-            errMsg.toLowerCase().includes("pending review");
-
-          if (isSandboxOnlyError) {
-            published = true;
-            realErrorMessage = `Simulated Publish (Meta App Review required. Sandbox user success)`;
-            console.log("Simulating publication success for Sandbox mode: app is pending Meta App Review.");
-          } else {
-            realErrorMessage = `Container error ${containerData.error.code}: ${containerData.error.message}`;
-            console.error("Instagram container error:", realErrorMessage);
-          }
-        } else {
-          const creationId = containerData.id;
-
-          // Poll container status — Instagram needs time to process the image
-          // before we can publish it (fixes error 9007: Media ID not available)
-          let containerReady = false;
-          for (let attempt = 0; attempt < 10; attempt++) {
-            await new Promise((resolve) => setTimeout(resolve, 3000)); // wait 3s
-            const statusRes = await fetch(
-              `https://graph.instagram.com/v21.0/${creationId}?fields=status_code&access_token=${decryptedToken}`
-            );
-            const statusData = await statusRes.json();
-            console.log(`Container status attempt ${attempt + 1}:`, statusData.status_code);
-            if (statusData.status_code === "FINISHED") {
-              containerReady = true;
-              break;
-            }
-            if (statusData.status_code === "ERROR") {
-              realErrorMessage = "Instagram container processing failed (ERROR status)";
-              break;
-            }
-            // IN_PROGRESS — keep polling
-          }
-
-          if (!containerReady && !realErrorMessage) {
-            realErrorMessage = "Instagram container timed out — image may be too large or URL unreachable";
-          }
-
-          if (containerReady) {
-            const publishRes = await fetch(
-              `https://graph.instagram.com/v21.0/${profile.instagram_id}/media_publish`,
-              {
-                method: "POST",
-                headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                body: new URLSearchParams({
-                  creation_id: creationId,
-                  access_token: decryptedToken,
-                }),
-              }
-            );
-            const publishData = await publishRes.json();
-            console.log("Instagram publish response:", JSON.stringify(publishData));
-
-            if (publishData.error) {
-              const errMsg = publishData.error.message || "";
-              const isSandboxOnlyError = 
-                errMsg.toLowerCase().includes("app is in development mode") ||
-                errMsg.toLowerCase().includes("does not have permission to publish") ||
-                errMsg.toLowerCase().includes("app review") ||
-                errMsg.toLowerCase().includes("submit for review") ||
-                errMsg.toLowerCase().includes("pending review");
-
-              if (isSandboxOnlyError) {
-                published = true;
-                realErrorMessage = `Simulated Publish (Meta App Review required. Sandbox user success)`;
-                console.log("Simulating publication success for Sandbox mode: app is pending Meta App Review.");
-              } else {
-                realErrorMessage = `Publish error ${publishData.error.code}: ${publishData.error.message}`;
-                console.error("Instagram publish error:", realErrorMessage);
-              }
-            } else {
-              published = true;
-            }
-          }
-        }
-      } else {
-        published = true; // simulation mode — no token/media
-      }
-
-      // Update DB status
-      const newStatus = published ? "posted" : "failed";
-      const { error } = await supabase
-        .from("scheduled_posts")
-        .update({ status: newStatus })
-        .eq("id", postId);
-
-      if (error) throw error;
-
-      setScheduledPosts((prev) => {
-        const next = prev.map((p) =>
-          p.id === postId ? { ...p, status: newStatus as any } : p
-        );
-        return next;
+      // Proxy through server-side API route — token decryption happens server-side only
+      const res = await fetch("/api/instagram/publish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ postId }),
       });
-      setActiveActionMenuId(null);
+      const result = await res.json();
 
-      if (published) {
-        if (realErrorMessage.startsWith("Simulated")) {
+      if (!res.ok) {
+        const errMsg = result.error || "Failed to publish to Instagram";
+        const isSandboxOnlyError =
+          errMsg.toLowerCase().includes("app is in development mode") ||
+          errMsg.toLowerCase().includes("does not have permission to publish") ||
+          errMsg.toLowerCase().includes("app review") ||
+          errMsg.toLowerCase().includes("submit for review") ||
+          errMsg.toLowerCase().includes("pending review");
+
+        if (isSandboxOnlyError) {
+          // Mark as posted anyway — sandbox mode
+          await supabase.from("scheduled_posts").update({ status: "posted" }).eq("id", postId);
+          setScheduledPosts(prev => prev.map(p => p.id === postId ? { ...p, status: "posted" as any } : p));
           showToast("Simulated Publish (Meta App Review pending) ✅", "success");
         } else {
-          showToast("Post published to Instagram! ✅", "success");
+          await supabase.from("scheduled_posts").update({ status: "failed" }).eq("id", postId);
+          setScheduledPosts(prev => prev.map(p => p.id === postId ? { ...p, status: "failed" as any } : p));
+          showToast(`❌ ${errMsg}`, "error");
         }
       } else {
-        showToast(`❌ ${realErrorMessage || "Failed to publish to Instagram"}`, "error");
+        // Success
+        setScheduledPosts(prev => prev.map(p => p.id === postId ? { ...p, status: "posted" as any } : p));
+        showToast(result.simulated ? "Simulated Publish (Meta App Review pending) ✅" : "Post published to Instagram! ✅", "success");
       }
+      setActiveActionMenuId(null);
     } catch (err: any) {
       console.error("Error publishing post:", err);
-      const errMsg = err.message || "";
-      const isSandboxOnlyError = 
-        errMsg.toLowerCase().includes("app is in development mode") ||
-        errMsg.toLowerCase().includes("does not have permission to publish") ||
-        errMsg.toLowerCase().includes("app review") ||
-        errMsg.toLowerCase().includes("submit for review") ||
-        errMsg.toLowerCase().includes("pending review");
-
-      if (isSandboxOnlyError) {
-        await supabase
-          .from("scheduled_posts")
-          .update({ status: "posted" })
-          .eq("id", postId);
-
-        setScheduledPosts((prev) => {
-          const next = prev.map((p) =>
-            p.id === postId ? { ...p, status: "posted" as any } : p
-          );
-          return next;
-        });
-        setActiveActionMenuId(null);
-        showToast("Simulated Publish (Meta App Review pending) ✅", "success");
-      } else {
-        showToast(`Error: ${err.message}`, "error");
-      }
+      showToast(`Error: ${err.message}`, "error");
     }
   };
 
@@ -701,9 +594,10 @@ export default function SchedulerPage() {
 
       setScheduledPosts((prev) => {
         const next = prev.filter((p) => p.id !== postId);
-        localStorage.setItem("ghostflow_scheduled_posts", JSON.stringify(next));
+        localStorage.setItem("Ghostal_scheduled_posts", JSON.stringify(next));
         return next;
       });
+      setSelectedPostIds(prev => prev.filter(id => id !== postId));
       setActiveActionMenuId(null);
       showToast("Scheduled post removed.", "success");
     } catch (err: any) {
@@ -712,15 +606,41 @@ export default function SchedulerPage() {
     }
   };
 
+  const handleBulkDeletePosts = async () => {
+    if (!user || selectedPostIds.length === 0) return;
+    if (!confirm(`Are you sure you want to delete the ${selectedPostIds.length} selected scheduled posts?`)) return;
+
+    showToast("Deleting selected posts...", "info");
+
+    try {
+      const { error } = await supabase
+        .from("scheduled_posts")
+        .delete()
+        .in("id", selectedPostIds);
+
+      if (error) throw error;
+
+      setScheduledPosts((prev) => {
+        const next = prev.filter((item) => !selectedPostIds.includes(item.id));
+        localStorage.setItem("Ghostal_scheduled_posts", JSON.stringify(next));
+        return next;
+      });
+
+      setSelectedPostIds([]);
+      showToast("Selected posts deleted successfully!", "success");
+    } catch (err: any) {
+      console.error("Bulk delete failed:", err);
+      showToast(err.message || "Failed bulk deletion", "error");
+    }
+  };
+
   const handleEditPostClick = (post: ScheduledPost) => {
     setEditingPostId(post.id);
     setSelectedVaultItemId(post.vaultItemId || "");
     
-    const postDate = new Date(post.scheduledAt);
-    setScheduleDate(formatDateInput(postDate));
-    const h = postDate.getHours().toString().padStart(2, "0");
-    const m = postDate.getMinutes().toString().padStart(2, "0");
-    setScheduleTime(`${h}:${m}`);
+    const zonedPost = formatZonedTime(new Date(post.scheduledAt), timezone);
+    setScheduleDate(zonedPost.dateStr);
+    setScheduleTime(zonedPost.timeStr);
     
     setCustomCaption(post.caption);
     setCustomHashtags(post.hashtags.join(", "));
@@ -733,15 +653,14 @@ export default function SchedulerPage() {
     e.preventDefault();
     if (!user) return;
     
-    const dateTimeStr = `${scheduleDate}T${scheduleTime}:00`;
-    const targetDateObj = new Date(dateTimeStr);
+    const utcDateObj = parseZonedTime(scheduleDate, scheduleTime, timezone);
     
-    if (isNaN(targetDateObj.getTime())) {
+    if (isNaN(utcDateObj.getTime())) {
       setModalError("Invalid date or time selected.");
       return;
     }
     
-    if (targetDateObj < new Date()) {
+    if (utcDateObj < new Date()) {
       setModalError("Cannot schedule a post in the past. Please select a future date and time.");
       return;
     }
@@ -766,7 +685,7 @@ export default function SchedulerPage() {
             caption: customCaption || "Untitled Scheduled Post",
             hashtags: hashtagsArray,
             first_comment: customFirstComment || null,
-            scheduled_at: new Date(dateTimeStr).toISOString(),
+            scheduled_at: utcDateObj.toISOString(),
             type: finalType,
             thumbnail_url: finalThumbnail || null,
           })
@@ -783,7 +702,7 @@ export default function SchedulerPage() {
                   caption: customCaption || "Untitled Scheduled Post",
                   hashtags: hashtagsArray,
                   firstComment: customFirstComment,
-                  scheduledAt: new Date(dateTimeStr).toISOString(),
+                  scheduledAt: utcDateObj.toISOString(),
                   type: finalType as any,
                   thumbnailUrl: finalThumbnail,
                 }
@@ -801,7 +720,7 @@ export default function SchedulerPage() {
             caption: customCaption || "Untitled Scheduled Post",
             hashtags: hashtagsArray,
             first_comment: customFirstComment || null,
-            scheduled_at: new Date(dateTimeStr).toISOString(),
+            scheduled_at: utcDateObj.toISOString(),
             status: "scheduled",
             type: finalType,
             thumbnail_url: finalThumbnail || null,
@@ -884,15 +803,29 @@ export default function SchedulerPage() {
       {/* Header */}
       <motion.div variants={item} className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl md:text-3xl font-bold text-white flex items-center gap-3">
+          <h1 className="text-2xl md:text-3xl font-bold text-foreground flex items-center gap-3">
             <Calendar className="h-7 w-7 text-violet-400" />
             Content Scheduler
           </h1>
-          <p className="mt-1 text-sm text-zinc-400">
+          <p className="mt-1 text-sm text-muted-foreground">
             {scheduledPosts.filter((p) => p.status === "scheduled").length} posts scheduled
           </p>
         </div>
         <div className="flex items-center gap-3">
+          {/* Timezone Selector */}
+          <div className="hidden sm:flex rounded-lg bg-white/5 border border-white/5 px-2 py-1 items-center gap-2">
+            <span className="text-[10px] uppercase font-bold tracking-widest text-zinc-500">TZ</span>
+            <select
+              value={timezone}
+              onChange={(e) => handleTimezoneChange(e.target.value)}
+              className="bg-transparent text-xs font-semibold text-violet-400 focus:outline-none focus:ring-0 cursor-pointer max-w-[140px] truncate"
+            >
+              {availableTimezones.map(tz => (
+                <option key={tz} value={tz} className="bg-zinc-900 text-zinc-300">{tz}</option>
+              ))}
+            </select>
+          </div>
+
           {/* View Toggle */}
           <div className="flex rounded-lg bg-white/5 border border-white/5 p-0.5">
             <button
@@ -951,7 +884,7 @@ export default function SchedulerPage() {
               <ChevronLeft className="h-4 w-4" />
               Previous
             </button>
-            <h2 className="text-sm font-semibold text-white">
+            <h2 className="text-sm font-semibold text-foreground">
               {formatWeekRange()}
             </h2>
             <button 
@@ -970,6 +903,7 @@ export default function SchedulerPage() {
               <div className="p-3 text-xs font-medium text-zinc-500" />
               {DAYS.map((day, idx) => {
                 const days = getWeekDays();
+                if (days.length === 0) return <div key={day} className="p-3" />;
                 const dayDate = days[idx];
                 return (
                   <div
@@ -993,7 +927,7 @@ export default function SchedulerPage() {
                   {hour}
                 </div>
                 {DAYS.map((day, dayIdx) => {
-                  const postsHere = getPostsForDayHour(dayIdx, hour);
+                  const postsHere = postsBySlot[`${dayIdx}-${hour}`] || [];
                   const isDraggedOver = draggedOverCell === `${dayIdx}-${hour}`;
                   return (
                     <div
@@ -1031,12 +965,35 @@ export default function SchedulerPage() {
                             {/* Subtle Background Cover Thumbnail */}
                             {post.thumbnailUrl && (
                               <div
-                                className="absolute inset-0 bg-cover bg-center opacity-[0.25] group-hover/card:scale-105 transition-transform duration-500 pointer-events-none"
-                                style={{ backgroundImage: `url(${post.thumbnailUrl})` }}
+                                className="absolute inset-0 bg-cover bg-center opacity-80 group-hover/card:scale-105 transition-transform duration-500 pointer-events-none"
+                                style={{
+                                  backgroundImage: `url(${
+                                    post.thumbnailUrl.includes("res.cloudinary.com")
+                                      ? `/api/media?url=${encodeURIComponent(post.thumbnailUrl.replace(/\.(mp4|mov|webm)$/i, ".jpg"))}`
+                                      : post.thumbnailUrl
+                                  })`
+                                }}
                               />
                             )}
+                            <div className="absolute inset-0 bg-black/25 pointer-events-none" />
                             
                             <div className="relative z-10 space-y-1">
+                              <div className="flex items-center justify-between gap-1 mb-1">
+                                <span className="rounded bg-black/60 px-1 py-0.5 text-[8px] font-bold text-white shadow-sm whitespace-nowrap">
+                                  {new Date(post.scheduledAt).toLocaleTimeString("en-US", { hour: 'numeric', minute: '2-digit' })}
+                                </span>
+                                <div
+                                  onClick={(e) => toggleSelectPost(post.id, e)}
+                                  className={cn(
+                                    "flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] border transition-colors cursor-pointer",
+                                    selectedPostIds.includes(post.id)
+                                      ? "border-violet-500 bg-violet-500"
+                                      : "border-white/20 bg-black/40 hover:border-white/40 group-hover/card:border-white/30"
+                                  )}
+                                >
+                                  {selectedPostIds.includes(post.id) && <Check className="h-3 w-3 text-white" />}
+                                </div>
+                              </div>
                               <p className="font-semibold text-white truncate text-[9px] leading-tight drop-shadow-md">
                                 {post.caption}
                               </p>
@@ -1076,8 +1033,24 @@ export default function SchedulerPage() {
                 <motion.div
                   key={post.id}
                   variants={item}
-                  className="glass rounded-xl p-4 flex items-center gap-4 hover:border-violet-500/20 transition-all group relative"
+                  className={cn(
+                    "glass rounded-xl p-4 flex items-center gap-4 hover:border-violet-500/20 transition-all group relative cursor-pointer",
+                    isMenuOpen ? "z-50" : "z-10"
+                  )}
+                  onClick={(e) => toggleSelectPost(post.id, e)}
                 >
+                  {/* Selection Checkbox */}
+                  <div
+                    className={cn(
+                      "flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition-colors",
+                      selectedPostIds.includes(post.id)
+                        ? "border-violet-500 bg-violet-500"
+                        : "border-white/10 bg-black/20 group-hover:border-white/20"
+                    )}
+                  >
+                    {selectedPostIds.includes(post.id) && <Check className="h-3.5 w-3.5 text-white" />}
+                  </div>
+
                   {/* Thumbnail */}
                   <div className="h-16 w-16 rounded-lg shrink-0 overflow-hidden relative border border-white/5 bg-[#12111d]">
                     <div
@@ -1085,14 +1058,18 @@ export default function SchedulerPage() {
                       style={
                         post.thumbnailUrl
                           ? {
-                              backgroundImage: `url(${post.thumbnailUrl})`,
+                              backgroundImage: `url(${
+                                post.thumbnailUrl.includes("res.cloudinary.com")
+                                  ? `/api/media?url=${encodeURIComponent(post.thumbnailUrl.replace(/\.(mp4|mov|webm)$/i, ".jpg"))}`
+                                  : post.thumbnailUrl
+                              })`,
                               backgroundSize: "cover",
                               backgroundPosition: "center",
                             }
                           : undefined
                       }
                     />
-                    <div className="absolute inset-0 flex items-center justify-center bg-black/35 backdrop-blur-[1px]">
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/20 backdrop-blur-[1px]">
                       <TypeIcon className="h-5 w-5 text-white/70" />
                     </div>
                   </div>
@@ -1143,7 +1120,7 @@ export default function SchedulerPage() {
                         e.stopPropagation();
                         setActiveActionMenuId(isMenuOpen ? null : post.id);
                       }}
-                      className="opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity flex h-8 w-8 items-center justify-center rounded-lg hover:bg-white/5 text-zinc-400 hover:text-white cursor-pointer"
+                      className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100 transition-opacity flex h-8 w-8 items-center justify-center rounded-lg hover:bg-white/5 text-zinc-400 hover:text-white cursor-pointer"
                     >
                       <MoreVertical className="h-4 w-4" />
                     </button>
@@ -1195,7 +1172,7 @@ export default function SchedulerPage() {
 
       {/* Quick Schedule */}
       <motion.div variants={item} className="glass rounded-xl p-5">
-        <h2 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
+        <h2 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
           <Clock className="h-4 w-4 text-cyan-400" />
           Quick Schedule
         </h2>
@@ -1216,6 +1193,36 @@ export default function SchedulerPage() {
           )}
         </div>
       </motion.div>
+
+      {/* Bulk Action Bar */}
+      <AnimatePresence>
+        {selectedPostIds.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 50 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 50 }}
+            className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-4 rounded-full bg-zinc-900 border border-white/10 px-6 py-3 shadow-2xl shadow-black/50"
+          >
+            <span className="text-sm font-medium text-white">
+              {selectedPostIds.length} item{selectedPostIds.length !== 1 && "s"} selected
+            </span>
+            <div className="h-4 w-px bg-white/20" />
+            <button
+              onClick={() => setSelectedPostIds([])}
+              className="text-sm font-medium text-zinc-400 hover:text-white transition-colors cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleBulkDeletePosts}
+              className="flex items-center gap-2 rounded-full bg-red-500/20 px-4 py-1.5 text-sm font-medium text-red-400 hover:bg-red-500/30 hover:text-red-300 transition-colors cursor-pointer"
+            >
+              <Trash2 className="h-4 w-4" />
+              Delete Selected
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Schedule Post Modal */}
       <AnimatePresence>
@@ -1240,7 +1247,7 @@ export default function SchedulerPage() {
                 {/* Modal Header */}
                 <div className="p-6 pb-4 border-b border-white/[0.04] flex items-center justify-between shrink-0">
                   <div>
-                    <h2 className="text-xl font-bold text-white tracking-tight">
+                    <h2 className="text-xl font-bold text-foreground tracking-tight">
                       {editingPostId ? "Edit Scheduled Post" : "Schedule New Post"}
                     </h2>
                     <p className="text-xs text-zinc-500 mt-0.5">Plan and publish your content to automated social queues.</p>
@@ -1274,10 +1281,24 @@ export default function SchedulerPage() {
 
                     {/* Vault Item Picker */}
                     <div className="space-y-2">
-                      <label className="text-xs font-semibold text-zinc-400 uppercase tracking-wider flex items-center justify-between">
-                        <span>Select Vault Asset</span>
-                        <span className="text-[10px] text-zinc-500 font-normal lowercase">(optional override)</span>
-                      </label>
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-semibold text-zinc-400 uppercase tracking-wider flex items-center gap-2">
+                          <span>Select Vault Asset</span>
+                          <span className="text-[10px] text-zinc-500 font-normal lowercase">(optional override)</span>
+                        </label>
+                        {vaultItems.length > 0 && (
+                          <div className="relative w-1/2 max-w-[200px]">
+                            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-zinc-500" />
+                            <input
+                              type="text"
+                              value={vaultSearchQuery}
+                              onChange={(e) => setVaultSearchQuery(e.target.value)}
+                              placeholder="Search assets..."
+                              className="w-full rounded-md border border-white/5 bg-black/20 py-1.5 pl-8 pr-3 text-xs text-white placeholder:text-zinc-500 focus:border-purple-500/50 outline-none"
+                            />
+                          </div>
+                        )}
+                      </div>
                       
                       {vaultItems.length === 0 ? (
                         <div className="p-4 rounded-xl border border-white/[0.04] bg-[#12111d]/30 text-center text-xs text-zinc-500">
@@ -1285,7 +1306,7 @@ export default function SchedulerPage() {
                         </div>
                       ) : (
                         <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent">
-                          {vaultItems.map((item) => {
+                          {vaultItems.filter(v => v.title.toLowerCase().includes(vaultSearchQuery.toLowerCase()) || v.caption.toLowerCase().includes(vaultSearchQuery.toLowerCase())).map((item) => {
                             const isSelected = selectedVaultItemId === item.id;
                             const TypeIcon = typeIcons[item.type] || ImageIcon;
                             return (
@@ -1305,14 +1326,18 @@ export default function SchedulerPage() {
                                   style={
                                     item.thumbnailUrl
                                       ? {
-                                          backgroundImage: `url(${item.thumbnailUrl})`,
+                                          backgroundImage: `url(${
+                                            item.thumbnailUrl.includes("res.cloudinary.com")
+                                              ? `/api/media?url=${encodeURIComponent(item.thumbnailUrl.replace(/\.(mp4|mov|webm)$/i, ".jpg"))}`
+                                              : item.thumbnailUrl
+                                          })`,
                                           backgroundSize: "cover",
                                           backgroundPosition: "center",
                                         }
                                       : undefined
                                   }
                                 />
-                                <div className="absolute inset-0 bg-black/40 flex flex-col justify-between p-2">
+                                <div className="absolute inset-0 bg-black/30 flex flex-col justify-between p-2">
                                   <div className="flex justify-between items-start">
                                     <span className="p-0.5 rounded bg-black/60 text-[8px] uppercase font-bold text-white flex items-center gap-0.5">
                                       <TypeIcon className="h-2 w-2" />
@@ -1346,7 +1371,10 @@ export default function SchedulerPage() {
                         />
                       </div>
                       <div className="space-y-2">
-                        <label className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Time</label>
+                        <label className="flex items-center justify-between text-xs font-semibold uppercase tracking-wider">
+                          <span className="text-zinc-400">Time</span>
+                          <span className="text-[9px] text-violet-400 bg-violet-400/10 px-1.5 py-0.5 rounded">{timezone}</span>
+                        </label>
                         <input
                           type="time"
                           required
