@@ -335,15 +335,21 @@ async function handleMentionEvent(value: any, entryId?: string) {
       userId = profile?.id ?? null;
     }
 
-    // Store the raw event (with user_id so RLS SELECT works)
-    await supabase.from("webhook_events").insert({
-      user_id: userId,
-      event_type: "mention",
-      instagram_media_id: mediaId,
-      instagram_object_id: commentId,
-      payload: value,
-      processed_at: new Date().toISOString(),
-    });
+    const idempotencyKey = commentId || `mention-${mediaId}-${Date.now()}`;
+
+    // Store the raw event (with user_id so RLS SELECT works) — upsert prevents duplicates on Meta retries
+    await supabase.from("webhook_events").upsert(
+      {
+        user_id: userId,
+        event_type: "mention",
+        instagram_media_id: mediaId,
+        instagram_object_id: commentId,
+        idempotency_key: idempotencyKey,
+        payload: value,
+        processed_at: new Date().toISOString(),
+      },
+      { onConflict: "idempotency_key", ignoreDuplicates: true }
+    );
 
     // Log as an engagement event
     await supabase.from("engagement_events").insert({
@@ -384,14 +390,20 @@ async function handleDMEvent(value: any, entryId?: string) {
       userId = profile?.id ?? null;
     }
 
-    // Store the raw event for auditability (with user_id for RLS)
-    await supabase.from("webhook_events").insert({
-      user_id: userId,
-      event_type: "dm",
-      instagram_object_id: messageId,
-      payload: value,
-      processed_at: new Date().toISOString(),
-    });
+    const idempotencyKey = messageId || `dm-${senderId}-${Date.now()}`;
+
+    // Store the raw event for auditability — upsert prevents duplicates on Meta retries
+    await supabase.from("webhook_events").upsert(
+      {
+        user_id: userId,
+        event_type: "dm",
+        instagram_object_id: messageId,
+        idempotency_key: idempotencyKey,
+        payload: value,
+        processed_at: new Date().toISOString(),
+      },
+      { onConflict: "idempotency_key", ignoreDuplicates: true }
+    );
 
     // Store in a dedicated DM inbox table (for future AI chatbot processing)
     if (senderId && messageText) {

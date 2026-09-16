@@ -11,18 +11,53 @@ const supabaseAdmin = createClient(
 // Instantiate Resend inside the request handler or with a fallback so it doesn't crash the build
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
+// Simple in-memory rate limiter: 5 requests per IP per 10 minutes
+const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+const RATE_LIMIT_MAX = 5;
+const RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
+
+function isRateLimited(ip: string): boolean {
+  const now = Date.now();
+  const entry = rateLimitMap.get(ip);
+  if (!entry || now > entry.resetAt) {
+    rateLimitMap.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+    return false;
+  }
+  if (entry.count >= RATE_LIMIT_MAX) return true;
+  entry.count++;
+  return false;
+}
+
 export async function POST(req: NextRequest) {
   try {
+    // Rate limiting by IP
+    const ip =
+      req.headers.get("x-forwarded-for")?.split(",")[0].trim() ||
+      req.headers.get("x-real-ip") ||
+      "unknown";
+    if (isRateLimited(ip)) {
+      return NextResponse.json(
+        { error: "Too many requests. Please try again later." },
+        { status: 429 }
+      );
+    }
+
     const { email, name } = await req.json();
 
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return NextResponse.json({ error: "Please enter a valid email address." }, { status: 400 });
     }
 
+
+    // Sanitize name: strip control characters, limit to 100 chars
+    const sanitizedName = name
+      ? name.trim().replace(/[\u0000-\u001F\u007F]/g, "").slice(0, 100) || null
+      : null;
+
     // Save to Supabase
     const { error: dbError } = await supabaseAdmin
       .from("waitlist")
-      .insert({ email: email.toLowerCase().trim(), name: name?.trim() || null });
+      .insert({ email: email.toLowerCase().trim(), name: sanitizedName });
 
     if (dbError) {
       if (dbError.code === "23505") {

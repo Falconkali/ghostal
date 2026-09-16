@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient as createServerClient } from "@/lib/supabase/server";
 import { decrypt } from "@/lib/crypto";
+import { validateCsrfOrigin } from "@/lib/csrf";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -17,6 +18,11 @@ export const maxDuration = 30;
  * session cookie is forwarded and auth.getUser() succeeds.
  */
 export async function POST(request: NextRequest) {
+  // 0. CSRF protection
+  if (!validateCsrfOrigin(request)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   const supabase = await createServerClient();
 
   // 1. Auth check

@@ -37,6 +37,30 @@ function getPlanFromItems(items: any[]): string {
   return "starter";
 }
 
+/**
+ * Records a Paddle event ID in the paddle_webhook_events table for idempotency.
+ * Returns true if the event was newly inserted (not a duplicate), false if it already existed.
+ */
+async function recordAndCheckIdempotency(eventId: string): Promise<boolean> {
+  if (!eventId) return true; // no ID to check — proceed
+
+  const { error } = await supabase
+    .from("paddle_webhook_events")
+    .insert({ event_id: eventId, processed_at: new Date().toISOString() });
+
+  if (error) {
+    // Unique constraint violation = duplicate event
+    if (error.code === "23505") {
+      console.log(`[paddle/webhook] Duplicate event ignored: ${eventId}`);
+      return false;
+    }
+    // Table may not exist yet — log but allow processing to continue
+    console.warn("[paddle/webhook] Idempotency insert error:", error.message);
+  }
+
+  return true;
+}
+
 export async function POST(request: NextRequest) {
   const signature = request.headers.get("paddle-signature") ?? "";
   const rawBody = await request.text();
@@ -52,6 +76,13 @@ export async function POST(request: NextRequest) {
 
     if (!event) {
       return Response.json({ received: true });
+    }
+
+    // Idempotency: skip if this exact event was already processed
+    const eventId = (event as any).eventId ?? (event as any).id ?? "";
+    const isNew = await recordAndCheckIdempotency(eventId);
+    if (!isNew) {
+      return Response.json({ received: true, duplicate: true });
     }
 
     switch (event.eventType) {
@@ -87,7 +118,7 @@ export async function POST(request: NextRequest) {
 
         await supabase
           .from("profiles")
-          .update({ plan: "free", payment_provider: null })
+          .update({ plan: "free", payment_provider: null, subscription_status: "canceled" })
           .eq("id", userId);
         break;
       }
