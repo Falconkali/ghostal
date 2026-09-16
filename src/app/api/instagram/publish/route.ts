@@ -3,20 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { createClient as createServerClient } from "@/lib/supabase/server";
 import { decrypt } from "@/lib/crypto";
 import { validateCsrfOrigin } from "@/lib/csrf";
-
-// Simple in-memory rate limiter (5 publish requests per minute per user)
-const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
-function isRateLimited(userId: string): boolean {
-  const now = Date.now();
-  const entry = rateLimitMap.get(userId);
-  if (!entry || entry.resetAt < now) {
-    rateLimitMap.set(userId, { count: 1, resetAt: now + 60_000 });
-    return false;
-  }
-  if (entry.count >= 5) return true;
-  entry.count++;
-  return false;
-}
+import { checkRateLimit } from "@/lib/rate-limit";
 
 export async function POST(request: NextRequest) {
   try {
@@ -27,14 +14,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    if (isRateLimited(user.id)) {
-      return NextResponse.json({ error: "Too many requests" }, { status: 429 });
+    // Global rate limiting: 5 publishes per minute per user
+    const allowed = await checkRateLimit("publish", user.id, 5, 60);
+    if (!allowed) {
+      return NextResponse.json({ error: "Too many requests. Please wait before publishing again." }, { status: 429 });
     }
 
     // CSRF check
     if (!validateCsrfOrigin(request)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
+
 
     const body = await request.json();
     const { postId } = body;

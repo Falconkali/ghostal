@@ -508,11 +508,14 @@ function SettingsContent() {
       }
       const redirectUri = `${window.location.origin}/api/auth/instagram/callback`;
       const scope = "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights";
-      // Generate a random state token for CSRF protection
+      // Generate a random state token for CSRF protection (OAuth 2.0 §10.12)
       const stateToken = Array.from(crypto.getRandomValues(new Uint8Array(16)))
         .map((b) => b.toString(16).padStart(2, "0"))
         .join("");
+      // Store state in BOTH sessionStorage (client backup) AND a cookie so the
+      // server-side callback route can read and verify it.
       sessionStorage.setItem("ig_oauth_state", stateToken);
+      document.cookie = `ig_oauth_state=${stateToken}; path=/; SameSite=Lax; Max-Age=600`;
       const oauthUrl = `https://www.instagram.com/oauth/authorize?client_id=${instagramAppId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${scope}&response_type=code&state=${stateToken}`;
       
       window.location.href = oauthUrl;

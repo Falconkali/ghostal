@@ -12,6 +12,7 @@ export async function GET(request: NextRequest) {
   let code = searchParams.get("code");
   const errorParam = searchParams.get("error");
   const errorDescription = searchParams.get("error_description");
+  const stateReturned = searchParams.get("state");
 
   let redirectUrl = `${origin}/settings`;
 
@@ -23,6 +24,15 @@ export async function GET(request: NextRequest) {
   if (!code) {
     console.error("Instagram OAuth error: No code returned");
     return NextResponse.redirect(`${redirectUrl}?error=no_authorization_code`);
+  }
+
+  // ── OAuth State (CSRF) Validation ──────────────────────────────────────────
+  // The state token was stored in a cookie when the OAuth flow was initiated.
+  // Verify it matches the value returned by Instagram to prevent CSRF attacks.
+  const storedState = request.cookies.get("ig_oauth_state")?.value;
+  if (!storedState || !stateReturned || storedState !== stateReturned) {
+    console.error("Instagram OAuth CSRF check failed: state mismatch", { storedState, stateReturned });
+    return NextResponse.redirect(`${redirectUrl}?error=oauth_state_mismatch`);
   }
 
   // Clean the code parameter if Instagram appended #_ to it
@@ -158,7 +168,10 @@ export async function GET(request: NextRequest) {
       return NextResponse.redirect(`${redirectUrl}?error=database_save_failed`);
     }
 
-    return NextResponse.redirect(`${redirectUrl}?success=instagram_connected`);
+    // Clear the OAuth state cookie — it's single-use
+    const successRedirect = NextResponse.redirect(`${redirectUrl}?success=instagram_connected`);
+    successRedirect.cookies.set("ig_oauth_state", "", { path: "/", maxAge: 0 });
+    return successRedirect;
   } catch (err: any) {
     console.error("Unhandled error in callback handler:", err);
     return NextResponse.redirect(`${redirectUrl}?error=unhandled_callback_exception`);

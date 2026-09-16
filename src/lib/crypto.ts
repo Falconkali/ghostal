@@ -43,17 +43,21 @@ export function encrypt(text: string): string {
 
 /**
  * Decrypts a cipher string in the format `ivHex:authTagHex:encryptedHex`.
- * Throws on decryption failure — does NOT silently return plaintext.
+ * Throws on decryption failure or if the input is not in the expected format.
+ * This enforces that all tokens in the database are properly encrypted.
  */
 export function decrypt(encryptedText: string): string {
   if (!encryptedText) return "";
 
   const parts = encryptedText.split(":");
   if (parts.length !== 3) {
-    // Not in expected encrypted format — treat as legacy plaintext token
-    // Log a warning so this can be detected and migrated
-    console.warn("[crypto] decrypt: input is not in encrypted format (ivHex:authTagHex:encryptedHex). Treating as plaintext token.");
-    return encryptedText;
+    // Reject plaintext tokens — they must be re-encrypted before use.
+    // If you have legacy plaintext tokens in the DB, run a one-time migration
+    // to encrypt them with the encrypt() function before deploying.
+    throw new Error(
+      "[crypto] decrypt: input is not in encrypted format (ivHex:authTagHex:encryptedHex). " +
+      "This token must be re-encrypted. Please run a migration or reconnect Instagram."
+    );
   }
 
   const [ivHex, authTagHex, encryptedHex] = parts;

@@ -3,27 +3,17 @@ import { createClient } from "@supabase/supabase-js";
 import { createClient as createServerClient } from "@/lib/supabase/server";
 import { decrypt } from "@/lib/crypto";
 import { validateCsrfOrigin } from "@/lib/csrf";
-
-// Simple in-memory rate limiter (per IP, 10 req/min)
-const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
-function isRateLimited(ip: string): boolean {
-  const now = Date.now();
-  const entry = rateLimitMap.get(ip);
-  if (!entry || entry.resetAt < now) {
-    rateLimitMap.set(ip, { count: 1, resetAt: now + 60_000 });
-    return false;
-  }
-  if (entry.count >= 10) return true;
-  entry.count++;
-  return false;
-}
+import { checkRateLimit } from "@/lib/rate-limit";
 
 // Server-side route — derives userId from session (NOT from query param) to prevent IDOR
 export async function GET(request: NextRequest) {
   try {
-    // Rate limiting
-    const ip = request.headers.get("x-forwarded-for") ?? "unknown";
-    if (isRateLimited(ip)) {
+    // Global rate limiting: 10 req/min per user
+    const serverClientForAuth = await createServerClient();
+    const { data: { user: authUser } } = await serverClientForAuth.auth.getUser();
+    const rateLimitKey = authUser?.id ?? (request.headers.get("x-forwarded-for") ?? "unknown");
+    const allowed = await checkRateLimit("stats", rateLimitKey, 10, 60);
+    if (!allowed) {
       return NextResponse.json({ error: "Too many requests" }, { status: 429 });
     }
 
