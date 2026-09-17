@@ -8,31 +8,36 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY || "placeholder-key"
 );
 
-// Map Paddle price IDs → plan slugs
-const PRICE_TO_PLAN: Record<string, string> = {
-  [process.env.NEXT_PUBLIC_PADDLE_PRICE_STARTER ?? ""]: "starter",
-  [process.env.NEXT_PUBLIC_PADDLE_PRICE_STARTER_MONTH ?? ""]: "starter",
-  [process.env.NEXT_PUBLIC_PADDLE_PRICE_STARTER_YEAR ?? ""]: "starter",
-  [process.env.PADDLE_PRICE_STARTER ?? ""]: "starter",
-
-  [process.env.NEXT_PUBLIC_PADDLE_PRICE_CREATOR_PRO ?? ""]: "creator_pro",
-  [process.env.NEXT_PUBLIC_PADDLE_PRICE_PRO_MONTH ?? ""]: "creator_pro",
-  [process.env.NEXT_PUBLIC_PADDLE_PRICE_PRO_YEAR ?? ""]: "creator_pro",
-  [process.env.PADDLE_PRICE_CREATOR_PRO ?? ""]: "creator_pro",
-
-  [process.env.NEXT_PUBLIC_PADDLE_PRICE_SURVIVAL_AI ?? ""]: "survival_ai",
-  [process.env.NEXT_PUBLIC_PADDLE_PRICE_ADVANCED_MONTH ?? ""]: "survival_ai",
-  [process.env.NEXT_PUBLIC_PADDLE_PRICE_ADVANCED_YEAR ?? ""]: "survival_ai",
-  [process.env.PADDLE_PRICE_SURVIVAL_AI ?? ""]: "survival_ai",
-
-  [process.env.NEXT_PUBLIC_PADDLE_PRICE_LIFETIME ?? ""]: "lifetime",
-  [process.env.PADDLE_PRICE_LIFETIME ?? ""]: "lifetime",
-};
-
 function getPlanFromItems(items: any[]): string {
+  const priceToPlan: Record<string, string> = {};
+
+  const register = (priceId: string | undefined, plan: string) => {
+    if (priceId && priceId.trim()) {
+      priceToPlan[priceId.trim()] = plan;
+    }
+  };
+
+  register(process.env.NEXT_PUBLIC_PADDLE_PRICE_STARTER, "starter");
+  register(process.env.NEXT_PUBLIC_PADDLE_PRICE_STARTER_MONTH, "starter");
+  register(process.env.NEXT_PUBLIC_PADDLE_PRICE_STARTER_YEAR, "starter");
+  register(process.env.PADDLE_PRICE_STARTER, "starter");
+
+  register(process.env.NEXT_PUBLIC_PADDLE_PRICE_CREATOR_PRO, "creator_pro");
+  register(process.env.NEXT_PUBLIC_PADDLE_PRICE_PRO_MONTH, "creator_pro");
+  register(process.env.NEXT_PUBLIC_PADDLE_PRICE_PRO_YEAR, "creator_pro");
+  register(process.env.PADDLE_PRICE_CREATOR_PRO, "creator_pro");
+
+  register(process.env.NEXT_PUBLIC_PADDLE_PRICE_SURVIVAL_AI, "survival_ai");
+  register(process.env.NEXT_PUBLIC_PADDLE_PRICE_ADVANCED_MONTH, "survival_ai");
+  register(process.env.NEXT_PUBLIC_PADDLE_PRICE_ADVANCED_YEAR, "survival_ai");
+  register(process.env.PADDLE_PRICE_SURVIVAL_AI, "survival_ai");
+
+  register(process.env.NEXT_PUBLIC_PADDLE_PRICE_LIFETIME, "lifetime");
+  register(process.env.PADDLE_PRICE_LIFETIME, "lifetime");
+
   for (const item of items) {
     const priceId = item?.price?.id ?? item?.priceId ?? "";
-    if (PRICE_TO_PLAN[priceId]) return PRICE_TO_PLAN[priceId];
+    if (priceId && priceToPlan[priceId]) return priceToPlan[priceId];
   }
   return "starter";
 }

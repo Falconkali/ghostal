@@ -38,79 +38,86 @@ export async function GET(request: NextRequest) {
   }
 
   const results: any[] = [];
+  const BATCH_SIZE = 3; // process 3 profiles at a time
 
-  for (const profile of profiles) {
-    try {
-      const accessToken = decrypt(profile.instagram_token!);
-      const igUserId = profile.instagram_id!;
-      const userId = profile.id;
+  for (let i = 0; i < profiles.length; i += BATCH_SIZE) {
+    const batch = profiles.slice(i, i + BATCH_SIZE);
 
-      // 2. Fetch the last 10 media items
-      const mediaRes = await fetch(
-        `https://graph.instagram.com/v21.0/${igUserId}/media?fields=id,timestamp&limit=10&access_token=${accessToken}`
-      );
-      const mediaData = await mediaRes.json();
-
-      if (mediaData.error) {
-        console.error(`[sync-comments] Media fetch error for user ${userId}:`, mediaData.error.message);
-        results.push({ userId, error: mediaData.error.message });
-        continue;
-      }
-
-      const mediaItems: { id: string; timestamp: string }[] = mediaData.data ?? [];
-      let totalUpserted = 0;
-
-      // 3. For each media item, fetch comments
-      for (const media of mediaItems) {
+    await Promise.allSettled(
+      batch.map(async (profile) => {
         try {
-          const commentsRes = await fetch(
-            `https://graph.instagram.com/v21.0/${media.id}/comments?fields=id,text,timestamp,from&limit=50&access_token=${accessToken}`
+          const accessToken = decrypt(profile.instagram_token!);
+          const igUserId = profile.instagram_id!;
+          const userId = profile.id;
+
+          // 2. Fetch the last 10 media items
+          const mediaRes = await fetch(
+            `https://graph.instagram.com/v21.0/${igUserId}/media?fields=id,timestamp&limit=10&access_token=${accessToken}`
           );
-          const commentsData = await commentsRes.json();
+          const mediaData = await mediaRes.json();
 
-          if (commentsData.error) {
-            // Comments may not be available on all media types — skip silently
-            continue;
+          if (mediaData.error) {
+            console.error(`[sync-comments] Media fetch error for user ${userId}:`, mediaData.error.message);
+            results.push({ userId, error: mediaData.error.message });
+            return;
           }
 
-          const comments: any[] = commentsData.data ?? [];
+          const mediaItems: { id: string; timestamp: string }[] = mediaData.data ?? [];
+          let totalUpserted = 0;
 
-          for (const comment of comments) {
-            // Upsert — idempotency_key prevents duplicates from webhook + polling
-            const { error: upsertError } = await adminClient
-              .from("webhook_events")
-              .upsert(
-                {
-                  event_type: "comment",
-                  instagram_media_id: media.id,
-                  instagram_object_id: comment.id,
-                  idempotency_key: comment.id,
-                  payload: {
-                    id: comment.id,
-                    text: comment.text,
-                    timestamp: comment.timestamp,
-                    from: comment.from ?? {},
-                    media_id: media.id,
-                  },
-                  processed_at: comment.timestamp ?? new Date().toISOString(),
-                  user_id: userId,
-                },
-                { onConflict: "idempotency_key", ignoreDuplicates: true }
+          // 3. Fetch comments for all media items in parallel
+          const commentResults = await Promise.allSettled(
+            mediaItems.map(async (media) => {
+              const commentsRes = await fetch(
+                `https://graph.instagram.com/v21.0/${media.id}/comments?fields=id,text,timestamp,from&limit=50&access_token=${accessToken}`
               );
+              const commentsData = await commentsRes.json();
+              if (commentsData.error) return 0;
 
-            if (!upsertError) totalUpserted++;
-          }
-        } catch (commentErr: any) {
-          console.warn(`[sync-comments] Error fetching comments for media ${media.id}:`, commentErr.message);
+              const comments: any[] = commentsData.data ?? [];
+              let upserted = 0;
+
+              await Promise.allSettled(
+                comments.map(async (comment) => {
+                  const { error: upsertError } = await adminClient
+                    .from("webhook_events")
+                    .upsert(
+                      {
+                        event_type: "comment",
+                        instagram_media_id: media.id,
+                        instagram_object_id: comment.id,
+                        idempotency_key: comment.id,
+                        payload: {
+                          id: comment.id,
+                          text: comment.text,
+                          timestamp: comment.timestamp,
+                          from: comment.from ?? {},
+                          media_id: media.id,
+                        },
+                        processed_at: comment.timestamp ?? new Date().toISOString(),
+                        user_id: userId,
+                      },
+                      { onConflict: "idempotency_key", ignoreDuplicates: true }
+                    );
+                  if (!upsertError) upserted++;
+                })
+              );
+              return upserted;
+            })
+          );
+
+          commentResults.forEach((r) => {
+            if (r.status === "fulfilled") totalUpserted += r.value ?? 0;
+          });
+
+          console.log(`[sync-comments] User ${userId}: processed ${mediaItems.length} media, upserted ${totalUpserted} new comments`);
+          results.push({ userId, mediaCount: mediaItems.length, newComments: totalUpserted });
+        } catch (profileErr: any) {
+          console.error(`[sync-comments] Error processing profile ${profile.id}:`, profileErr.message);
+          results.push({ userId: profile.id, error: profileErr.message });
         }
-      }
-
-      console.log(`[sync-comments] User ${userId}: processed ${mediaItems.length} media, upserted ${totalUpserted} new comments`);
-      results.push({ userId, mediaCount: mediaItems.length, newComments: totalUpserted });
-    } catch (profileErr: any) {
-      console.error(`[sync-comments] Error processing profile ${profile.id}:`, profileErr.message);
-      results.push({ userId: profile.id, error: profileErr.message });
-    }
+      })
+    );
   }
 
   return NextResponse.json({ success: true, profiles: results.length, results }, { status: 200 });

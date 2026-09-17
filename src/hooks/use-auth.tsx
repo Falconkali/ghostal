@@ -73,16 +73,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (error) {
         if (error.code === "PGRST116") {
-          // Profile does not exist - self-heal by inserting one!
+          // Profile does not exist - self-heal by upserting one.
+          // Using upsert (ignoreDuplicates) prevents race conditions in React 18
+          // Strict Mode where this may fire twice concurrently.
           const { data: newProfile, error: insertError } = await supabase
             .from("profiles")
-            .insert({
-              id: authUserId,
-              name: authUserEmail.split("@")[0].replace(/[._-]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
-              email: authUserEmail,
-              instagram_connected: false,
-              instagram_handle: null
-            })
+            .upsert(
+              {
+                id: authUserId,
+                name: authUserEmail.split("@")[0].replace(/[._-]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+                email: authUserEmail,
+                instagram_connected: false,
+                instagram_handle: null,
+              },
+              { onConflict: "id", ignoreDuplicates: true }
+            )
             .select()
             .single();
 

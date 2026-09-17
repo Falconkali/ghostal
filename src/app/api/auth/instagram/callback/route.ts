@@ -70,9 +70,9 @@ export async function GET(request: NextRequest) {
   }
 
   // Instagram App credentials for token exchange
-  // client_id = Instagram App ID, client_secret = Instagram App Secret
-  const clientId = process.env.NEXT_PUBLIC_INSTAGRAM_APP_ID;
-  const clientSecret = process.env.INSTAGRAM_APP_SECRET;
+  // client_id = Instagram App ID (or Meta App ID), client_secret = Instagram App Secret (or Meta App Secret)
+  const clientId = process.env.NEXT_PUBLIC_INSTAGRAM_APP_ID || process.env.NEXT_PUBLIC_META_APP_ID;
+  const clientSecret = process.env.INSTAGRAM_APP_SECRET || process.env.META_APP_SECRET;
   const redirectUri = `${origin}/api/auth/instagram/callback`;
 
   if (!clientId || !clientSecret) {

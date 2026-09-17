@@ -208,6 +208,17 @@ export default function VaultPage() {
     );
   };
 
+  // Helper: extract Cloudinary public_id from URL
+  const extractCloudinaryPublicId = (url: string): string | null => {
+    try {
+      // Cloudinary URL format: https://res.cloudinary.com/<cloud>/image/upload/v<version>/<public_id>.<ext>
+      const match = url.match(/\/(?:image|video|raw)\/upload\/(?:v\d+\/)?(.+?)(?:\.[^.]+)?$/);
+      return match ? match[1] : null;
+    } catch {
+      return null;
+    }
+  };
+
   // Delete specific item
   const handleDeleteClick = (itemId: string, itemTitle: string) => {
     setDeleteConfirmation({ type: 'single', id: itemId, title: itemTitle });
@@ -216,6 +227,19 @@ export default function VaultPage() {
   const executeSingleDelete = async (itemId: string) => {
     if (!user) return;
     try {
+      // Delete the actual file from Cloudinary first
+      const item = vaultItems.find((v) => v.id === itemId);
+      if (item?.thumbnailUrl?.includes("res.cloudinary.com")) {
+        const publicId = extractCloudinaryPublicId(item.thumbnailUrl);
+        if (publicId) {
+          await fetch("/api/vault/delete", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ publicId, resourceType: item.type === "reel" ? "video" : "image" }),
+          }).catch(() => {}); // non-blocking — DB delete still proceeds
+        }
+      }
+
       const { error } = await supabase
         .from("vault_items")
         .delete()
@@ -308,6 +332,23 @@ export default function VaultPage() {
     showToast("Bulk unlinking and deleting assets...", "info");
 
     try {
+      // Delete actual files from Cloudinary first (non-blocking, best-effort)
+      const itemsToDelete = vaultItems.filter((item) => selectedIds.includes(item.id));
+      await Promise.allSettled(
+        itemsToDelete
+          .filter((item) => item.thumbnailUrl?.includes("res.cloudinary.com"))
+          .map(async (item) => {
+            const publicId = extractCloudinaryPublicId(item.thumbnailUrl!);
+            if (publicId) {
+              await fetch("/api/vault/delete", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ publicId, resourceType: item.type === "reel" ? "video" : "image" }),
+              });
+            }
+          })
+      );
+
       const { error } = await supabase
         .from("vault_items")
         .delete()
@@ -1164,7 +1205,8 @@ export default function VaultPage() {
 
                           if (!cloudRes.ok) {
                             const errData = await cloudRes.json().catch(() => ({}));
-                            throw new Error(errData?.error?.message || "Cloudinary upload failed");
+                            const msg = typeof errData?.error === "string" ? errData.error : errData?.error?.message;
+                            throw new Error(msg || "Cloudinary upload failed");
                           }
 
                           const cloudData = await cloudRes.json();

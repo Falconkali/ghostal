@@ -43,9 +43,16 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ message: "No active connected profiles found to process." }, { status: 200 });
     }
 
-    // 2. Loop over users and execute automation cycle in parallel (isolated)
-    const settledResults = await Promise.allSettled(
-      profiles.map(async (profile) => {
+    // 2. Process users in batches of 5 to avoid memory/connection exhaustion
+    // and serverless timeouts when many users have posts due simultaneously.
+    const BATCH_SIZE = 5;
+    const allResults: any[] = [];
+
+    for (let i = 0; i < profiles.length; i += BATCH_SIZE) {
+      const batch = profiles.slice(i, i + BATCH_SIZE);
+
+      const batchResults = await Promise.allSettled(
+        batch.map(async (profile) => {
         const userId = profile.id;
         const config = (profile.ghost_mode_config || {
           enabled: false,
@@ -141,22 +148,23 @@ export async function GET(request: NextRequest) {
           queueCount: currentQueueCount,
         };
       })
-    );
+      );
 
-    const results = settledResults.map((res, idx) => {
-      if (res.status === "fulfilled") {
-        return res.value;
-      } else {
-        console.error(`Cron failure for user ${profiles[idx].id}:`, res.reason);
-        return {
-          userId: profiles[idx].id,
-          error: res.reason?.message || "Execution failed",
-        };
-      }
-    });
+      batchResults.forEach((res, idx) => {
+        if (res.status === "fulfilled") {
+          allResults.push(res.value);
+        } else {
+          console.error(`Cron failure for user ${batch[idx].id}:`, res.reason);
+          allResults.push({
+            userId: batch[idx].id,
+            error: res.reason?.message || "Execution failed",
+          });
+        }
+      });
+    }
 
     return NextResponse.json(
-      { success: true, processedCount: profiles.length, results },
+      { success: true, processedCount: profiles.length, results: allResults },
       { status: 200 }
     );
   } catch (err: any) {

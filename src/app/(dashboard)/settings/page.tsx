@@ -499,8 +499,7 @@ function SettingsContent() {
     } else {
       setConnecting(true);
       // Instagram Business Login — uses instagram.com/oauth/authorize with the Instagram App ID.
-      // Redirect URI must be registered in Meta Developer > Use Cases > Business login settings.
-      const instagramAppId = process.env.NEXT_PUBLIC_INSTAGRAM_APP_ID;
+      const instagramAppId = process.env.NEXT_PUBLIC_INSTAGRAM_APP_ID || process.env.NEXT_PUBLIC_META_APP_ID;
       if (!instagramAppId) {
         setErrorMessage("Instagram App ID is not configured. Please contact support.");
         setConnecting(false);
