@@ -28,6 +28,7 @@ import {
   ExternalLink,
   Crown,
   Zap,
+  ArrowLeft,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
@@ -644,17 +645,37 @@ function SettingsContent() {
   ] as const;
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
-            Settings
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            Manage your account credentials, platform links, integrations, and AI presets.
-          </p>
+    <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+      {/* Top Navigation Bar */}
+      <div className="flex items-center justify-between border-b border-white/5 pb-4">
+        <Link
+          href="/dashboard"
+          className="group inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-zinc-300 transition-all hover:border-white/20 hover:bg-white/10 hover:text-white"
+        >
+          <ArrowLeft className="h-4 w-4 transition-transform group-hover:-translate-x-1" />
+          <span>Back to Dashboard</span>
+        </Link>
+
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 rounded-full border border-violet-500/20 bg-violet-500/10 px-3 py-1 text-xs font-semibold text-violet-300">
+            <Crown className="h-3.5 w-3.5" />
+            <span className="capitalize">{user?.plan || "Starter"} Plan</span>
+          </div>
+          <div className="text-right hidden sm:block">
+            <p className="text-xs font-medium text-white">{user?.name || user?.email?.split("@")[0]}</p>
+            <p className="text-[11px] text-zinc-500">{user?.email}</p>
+          </div>
         </div>
+      </div>
+
+      {/* Header */}
+      <div>
+        <h1 className="text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
+          Settings
+        </h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Manage your account credentials, platform links, integrations, and AI presets.
+        </p>
       </div>
 
       {/* Success Notification Alert */}
@@ -687,17 +708,17 @@ function SettingsContent() {
         )}
       </AnimatePresence>
 
-      <div className="grid gap-6 md:grid-cols-4">
-        {/* Navigation Sidebar */}
-        <div className="flex flex-col gap-1 md:col-span-1">
+      <div className="grid gap-8 md:grid-cols-12">
+        {/* Navigation Column */}
+        <div className="flex flex-col gap-1.5 md:col-span-3">
           {tabs.map((tab) => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
               className={`flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium transition-all cursor-pointer ${
                 activeTab === tab.id
-                  ? "bg-violet-600/20 text-white border border-violet-500/10 shadow-[0_0_15px_rgba(139,92,246,0.15)] font-semibold"
-                  : "text-zinc-400 hover:bg-white/5 hover:text-white"
+                  ? "bg-violet-600/20 text-white border border-violet-500/20 shadow-[0_0_20px_rgba(139,92,246,0.15)] font-semibold"
+                  : "text-zinc-400 hover:bg-white/5 hover:text-white border border-transparent"
               }`}
             >
               <tab.icon className={`h-4.5 w-4.5 ${activeTab === tab.id ? "text-violet-400" : "text-zinc-500"}`} />
@@ -707,7 +728,7 @@ function SettingsContent() {
         </div>
 
         {/* Content Box */}
-        <div className="md:col-span-3">
+        <div className="md:col-span-9">
           <AnimatePresence mode="wait">
             <motion.div
               key={activeTab}
@@ -715,7 +736,7 @@ function SettingsContent() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -15 }}
               transition={{ duration: 0.2 }}
-              className="glass rounded-2xl p-6 glow-violet border border-white/5"
+              className="glass rounded-2xl p-6 md:p-8 glow-violet border border-white/5"
             >
               {/* PROFILE TAB */}
               {activeTab === "profile" && (
