@@ -710,15 +710,15 @@ function SettingsContent() {
 
       <div className="grid gap-8 md:grid-cols-12">
         {/* Navigation Column */}
-        <div className="flex flex-col gap-1.5 md:col-span-3">
+        <div className="flex flex-col gap-1 md:col-span-3">
           {tabs.map((tab) => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
               className={`flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium transition-all cursor-pointer ${
                 activeTab === tab.id
-                  ? "bg-violet-600/20 text-white border border-violet-500/20 shadow-[0_0_20px_rgba(139,92,246,0.15)] font-semibold"
-                  : "text-zinc-400 hover:bg-white/5 hover:text-white border border-transparent"
+                  ? "bg-violet-600/15 text-white font-semibold"
+                  : "text-zinc-400 hover:bg-white/5 hover:text-white"
               }`}
             >
               <tab.icon className={`h-4.5 w-4.5 ${activeTab === tab.id ? "text-violet-400" : "text-zinc-500"}`} />
@@ -961,10 +961,10 @@ function SettingsContent() {
                         {connecting ? (
                           <>
                             <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            Establishing link...
+                            {instagramConnected ? "Disconnecting..." : "Establishing link..."}
                           </>
                         ) : instagramConnected ? (
-                          "Disconnect Link"
+                          "Disconnect"
                         ) : (
                           "Link Instagram Account"
                         )}
