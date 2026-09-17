@@ -33,7 +33,6 @@ export const DASHBOARD_NAV = [
   { label: "What's Coming", href: "/upcoming", icon: "Rocket" },
   { label: "Analytics", href: "/analytics", icon: "BarChart3" },
   { label: "Referrals", href: "/referrals", icon: "Users" },
-  { label: "Settings", href: "/settings", icon: "Settings" },
 ] as const;
 
 export const PRICING_PLANS: PricingPlan[] = [

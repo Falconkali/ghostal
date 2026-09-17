@@ -304,11 +304,30 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose
 
         {/* Bottom Controls */}
         <div className="border-t border-border px-2.5 py-2 space-y-0.5">
+          <Link
+            href="/settings"
+            onClick={onMobileClose}
+            className={cn(
+              "flex items-center rounded-xl px-3 py-2 text-[12px] font-medium transition-colors cursor-pointer",
+              pathname === "/settings"
+                ? "bg-white/10 text-white font-semibold"
+                : "text-muted-foreground hover:bg-foreground/5 hover:text-foreground",
+              isCollapsed ? "justify-center px-0" : "gap-2.5"
+            )}
+            title={isCollapsed ? "Settings" : undefined}
+          >
+            <Settings className="h-4 w-4 shrink-0 text-muted-foreground" />
+            {!isCollapsed && <span>Settings</span>}
+          </Link>
+
           {!isCollapsed && (
-            <Link href="/settings"
-              className="flex items-center gap-2.5 rounded-xl px-3 py-2 text-[12px] font-medium text-muted-foreground hover:bg-foreground/5 hover:text-foreground transition-colors">
+            <Link
+              href="/help"
+              onClick={onMobileClose}
+              className="flex items-center gap-2.5 rounded-xl px-3 py-2 text-[12px] font-medium text-muted-foreground hover:bg-foreground/5 hover:text-foreground transition-colors"
+            >
               <HelpCircle className="h-4 w-4 shrink-0 text-muted-foreground" />
-              Help & Support
+              <span>Help & Support</span>
             </Link>
           )}
           <button
