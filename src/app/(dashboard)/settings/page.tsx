@@ -637,7 +637,7 @@ function SettingsContent() {
 
   const tabs = [
     { id: "profile", label: "Profile", icon: UserIcon },
-    { id: "instagram", label: "Instagram Link", icon: Instagram },
+    { id: "instagram", label: "Instagram", icon: Instagram },
     { id: "notifications", label: "Notifications", icon: Bell },
     { id: "ai", label: "AI Survival", icon: Brain },
     { id: "security", label: "Security", icon: Lock },
@@ -933,7 +933,7 @@ function SettingsContent() {
                       </div>
                       <div>
                         <h4 className="text-sm font-semibold text-foreground">
-                          {instagramConnected ? (instagramHandle || "@your_account") : "Instagram API Link"}
+                          {instagramConnected ? (instagramHandle || "@your_account") : "Instagram Account"}
                         </h4>
                         <p className="text-xs text-zinc-400 mt-0.5">
                           {instagramConnected ? "Sync active. Content Vault & Scheduler are connected to database." : "Connect to auto-publish assets and sync metrics."}
@@ -943,7 +943,7 @@ function SettingsContent() {
 
                     {!instagramConnected && (
                       <p className="text-xs text-zinc-400 max-w-md leading-relaxed">
-                        Establishing a link will redirect you to Meta's secure Login for Business. 
+                        Connecting your account will redirect you to Meta's secure Login for Business. 
                         Make sure your Instagram Professional/Creator account is linked to a Facebook Page.
                       </p>
                     )}
@@ -961,12 +961,12 @@ function SettingsContent() {
                         {connecting ? (
                           <>
                             <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            {instagramConnected ? "Disconnecting..." : "Establishing link..."}
+                            {instagramConnected ? "Disconnecting..." : "Connecting..."}
                           </>
                         ) : instagramConnected ? (
                           "Disconnect"
                         ) : (
-                          "Link Instagram Account"
+                          "Connect Instagram"
                         )}
                       </button>
                     </div>
