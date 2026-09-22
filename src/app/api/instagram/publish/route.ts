@@ -5,6 +5,9 @@ import { decrypt } from "@/lib/crypto";
 import { validateCsrfOrigin } from "@/lib/csrf";
 import { checkRateLimit } from "@/lib/rate-limit";
 
+// Instagram container polling can take up to 30s — needs extended timeout
+export const maxDuration = 60;
+
 export async function POST(request: NextRequest) {
   try {
     // Auth check
@@ -74,10 +77,18 @@ export async function POST(request: NextRequest) {
       if (vaultItem) mediaUrl = vaultItem.media_url || "";
     }
 
-    // If no token/media, simulate success
-    if (!accessToken || !profile.instagram_id || !mediaUrl) {
-      await supabase.from("scheduled_posts").update({ status: "posted" }).eq("id", postId);
-      return NextResponse.json({ success: true, simulated: true });
+    // Fail explicitly if missing prerequisites — never fake a successful publish
+    if (!accessToken || !profile.instagram_id) {
+      return NextResponse.json(
+        { error: "Instagram account is not connected. Please connect your account in Settings." },
+        { status: 400 }
+      );
+    }
+    if (!mediaUrl) {
+      return NextResponse.json(
+        { error: "This post has no media attached. Please link a vault item before publishing." },
+        { status: 400 }
+      );
     }
 
     // Build container
@@ -158,7 +169,7 @@ export async function POST(request: NextRequest) {
     }
 
     await supabase.from("scheduled_posts").update({ status: "posted" }).eq("id", postId);
-    return NextResponse.json({ success: true, simulated: false });
+    return NextResponse.json({ success: true });
   } catch (err: any) {
     console.error("[instagram/publish] Unexpected error:", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

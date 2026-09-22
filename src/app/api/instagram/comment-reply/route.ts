@@ -76,36 +76,50 @@ export async function POST(request: NextRequest) {
     const accessToken = decrypt(profile.instagram_token);
     const igUserId = profile.instagram_id;
 
-    // 4. Verify the comment belongs to the user's own media (prevents API abuse)
-    if (igUserId) {
-      const commentCheckRes = await fetch(
-        `https://graph.instagram.com/v21.0/${comment_id}?fields=media&access_token=${accessToken}`
+    // Require a valid instagram_id — cannot verify comment ownership without it
+    if (!igUserId) {
+      return NextResponse.json(
+        { error: "Instagram account setup incomplete. Please reconnect your account." },
+        { status: 400 }
       );
-      const commentCheckData = await commentCheckRes.json();
+    }
 
-      if (commentCheckData.error) {
-        // Comment not found or not accessible — do not proceed
+    // Rate limiting: max 30 replies per minute per user
+    const { checkRateLimit } = await import("@/lib/rate-limit");
+    const allowed = await checkRateLimit("comment-reply", user.id, 30, 60);
+    if (!allowed) {
+      return NextResponse.json({ error: "Too many requests. Please slow down." }, { status: 429 });
+    }
+
+
+    // 4. Verify the comment belongs to the user's own media (prevents API abuse)
+    const commentCheckRes = await fetch(
+      `https://graph.instagram.com/v21.0/${comment_id}?fields=media&access_token=${accessToken}`
+    );
+    const commentCheckData = await commentCheckRes.json();
+
+    if (commentCheckData.error) {
+      // Comment not found or not accessible — do not proceed
+      return NextResponse.json(
+        { error: "Comment not found or not accessible" },
+        { status: 404 }
+      );
+    }
+
+    // Fetch the media owner to ensure it belongs to this user
+    const mediaId = commentCheckData.media?.id;
+    if (mediaId) {
+      const mediaCheckRes = await fetch(
+        `https://graph.instagram.com/v21.0/${mediaId}?fields=owner&access_token=${accessToken}`
+      );
+      const mediaCheckData = await mediaCheckRes.json();
+      const ownerId = mediaCheckData.owner?.id;
+
+      if (ownerId && ownerId !== igUserId) {
         return NextResponse.json(
-          { error: "Comment not found or not accessible" },
-          { status: 404 }
+          { error: "Comment does not belong to your media" },
+          { status: 403 }
         );
-      }
-
-      // Fetch the media owner to ensure it belongs to this user
-      const mediaId = commentCheckData.media?.id;
-      if (mediaId) {
-        const mediaCheckRes = await fetch(
-          `https://graph.instagram.com/v21.0/${mediaId}?fields=owner&access_token=${accessToken}`
-        );
-        const mediaCheckData = await mediaCheckRes.json();
-        const ownerId = mediaCheckData.owner?.id;
-
-        if (ownerId && ownerId !== igUserId) {
-          return NextResponse.json(
-            { error: "Comment does not belong to your media" },
-            { status: 403 }
-          );
-        }
       }
     }
 

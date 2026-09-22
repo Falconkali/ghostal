@@ -667,8 +667,15 @@ export default function SchedulerPage() {
 
     setModalError(null);
     const selectedVaultItem = vaultItems.find((v) => v.id === selectedVaultItemId);
-    const finalType = selectedVaultItem?.type || "image";
-    const finalThumbnail = selectedVaultItem?.thumbnailUrl;
+
+    // Require a vault item — media-less posts will always fail at publish time
+    if (!selectedVaultItem) {
+      setModalError("Please select a media item from your vault before scheduling.");
+      return;
+    }
+
+    const finalType = selectedVaultItem.type || "image";
+    const finalThumbnail = selectedVaultItem.thumbnailUrl;
     
     const hashtagsArray = customHashtags
       ? customHashtags.split(/[,\s]+/).map(t => t.trim().replace(/^#/, "")).filter(Boolean)
@@ -858,7 +865,7 @@ export default function SchedulerPage() {
             onClick={() => {
               setEditingPostId(null);
               setSelectedVaultItemId("");
-              setScheduleDate(formatDateInput(getWeekDays()[0]));
+              setScheduleDate(formatDateInput(new Date()));
               setScheduleTime("09:00");
               setCustomCaption("");
               setCustomHashtags("");

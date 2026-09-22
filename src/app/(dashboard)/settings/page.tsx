@@ -846,58 +846,7 @@ function SettingsContent() {
               </>
             )}
 
-            {/* BILLING TAB */}
-            {activeTab === "billing" && (
-              <div className="space-y-6">
-                <div>
-                  <h3 className="text-lg font-semibold text-foreground">Billing &amp; Plan</h3>
-                  <p className="text-xs text-muted-foreground">Manage your subscription, plan limits, and payment details.</p>
-                </div>
 
-                <div className="rounded-xl border border-white/5 bg-white/5 p-6 space-y-4">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                    <div>
-                      <p className="text-xs text-muted-foreground">Current Plan</p>
-                      <h4 className="text-xl font-bold text-foreground capitalize mt-1">
-                        {billingData.plan === "starter" ? "Ghostal Starter" : billingData.plan === "creator_pro" ? "Creator Pro" : billingData.plan === "survival_ai" ? "Survival AI" : billingData.plan}
-                      </h4>
-                      {billingData.subscription_status === "ACTIVE" && (
-                        <span className="inline-flex items-center gap-1.5 mt-2 rounded-full bg-emerald-500/10 px-2.5 py-1 text-[10px] font-semibold text-emerald-400">
-                          <CheckCircle className="h-3 w-3" /> Active Subscription
-                        </span>
-                      )}
-                      {billingData.subscription_status === "CANCELLED" && (
-                        <span className="inline-flex items-center gap-1.5 mt-2 rounded-full bg-red-500/10 px-2.5 py-1 text-[10px] font-semibold text-red-400">
-                          <AlertTriangle className="h-3 w-3" /> Cancelled
-                        </span>
-                      )}
-                    </div>
-                    {billingData.plan === "starter" ? (
-                      <a href="/#pricing" className="rounded-lg bg-violet-600 px-4 py-2 text-xs font-semibold text-white hover:bg-violet-500 transition-all">
-                        Upgrade Plan
-                      </a>
-                    ) : (
-                      <button
-                        onClick={handleCancelSubscription}
-                        disabled={cancelingSub || billingData.subscription_status === "CANCELLED"}
-                        className="rounded-lg bg-red-500/10 border border-red-500/20 px-4 py-2 text-xs font-semibold text-red-400 hover:bg-red-500/20 hover:text-red-300 transition-all disabled:opacity-50 cursor-pointer"
-                      >
-                        {cancelingSub ? "Canceling..." : billingData.subscription_status === "CANCELLED" ? "Already Cancelled" : "Cancel Subscription"}
-                      </button>
-                    )}
-                  </div>
-
-                  {billingData.trial_ends_at && new Date(billingData.trial_ends_at) > new Date() && (
-                    <div className="mt-4 pt-4 border-t border-white/5">
-                      <p className="text-xs text-muted-foreground">
-                        Your free trial ends on <span className="font-semibold text-white">{new Date(billingData.trial_ends_at).toLocaleDateString()}</span>.
-                        You will not be charged before this date.
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
 
               {/* INSTAGRAM TAB */}
               {activeTab === "instagram" && (

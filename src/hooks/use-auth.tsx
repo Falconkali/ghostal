@@ -180,11 +180,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (session && session.user && mounted) {
           // Remember Me check: if user logged in without "remember me",
           // sign them out when their browser session ends (sessionStorage is cleared on close)
-          const hasRememberMe = typeof window !== "undefined" && localStorage.getItem("Ghostal_remember_me") === "1";
           const hasSessionFlag = typeof window !== "undefined" && sessionStorage.getItem("Ghostal_session_only") === "1";
 
-          if (!hasRememberMe && !hasSessionFlag) {
-            // Browser was closed with remember me unchecked — sign out silently
+          // Only sign out if user explicitly chose session-only login AND browser was restarted
+          // (sessionStorage cleared). If neither flag exists, treat as remembered — this handles
+          // signup, OAuth, email confirmation, and new tabs correctly.
+          const explicitlySessionOnly = typeof window !== "undefined" && localStorage.getItem("Ghostal_remember_me") === "0";
+          if (explicitlySessionOnly && !hasSessionFlag) {
             await supabase.auth.signOut();
             if (mounted) setIsLoading(false);
             return;

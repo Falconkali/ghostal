@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { Resend } from "resend";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL || "https://placeholder-project.supabase.co",
@@ -11,35 +12,13 @@ const supabaseAdmin = createClient(
 // Instantiate Resend inside the request handler or with a fallback so it doesn't crash the build
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
-// Simple in-memory rate limiter: 5 requests per IP per 10 minutes
-const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
-const RATE_LIMIT_MAX = 5;
-const RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
-
-function isRateLimited(ip: string): boolean {
-  const now = Date.now();
-  const entry = rateLimitMap.get(ip);
-  if (!entry || now > entry.resetAt) {
-    rateLimitMap.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
-    return false;
-  }
-  if (entry.count >= RATE_LIMIT_MAX) return true;
-  entry.count++;
-  return false;
-}
-
 export async function POST(req: NextRequest) {
   try {
-    // Rate limiting by IP
-    const ip =
-      req.headers.get("x-forwarded-for")?.split(",")[0].trim() ||
-      req.headers.get("x-real-ip") ||
-      "unknown";
-    if (isRateLimited(ip)) {
-      return NextResponse.json(
-        { error: "Too many requests. Please try again later." },
-        { status: 429 }
-      );
+    // Rate limiting by IP — 3 requests per 5 minutes, backed by Supabase (works across serverless instances)
+    const clientIp = req.headers.get("x-forwarded-for")?.split(",")[0].trim() || "unknown";
+    const rateLimitOk = await checkRateLimit(`waitlist:${clientIp}`, clientIp, 3, 300); // 3 per 5 min per IP
+    if (!rateLimitOk) {
+      return NextResponse.json({ error: "Too many requests. Please try again later." }, { status: 429 });
     }
 
     const { email, name } = await req.json();

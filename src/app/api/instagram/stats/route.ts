@@ -22,11 +22,10 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    // Authenticate — get the calling user's session
-    const serverClient = await createServerClient();
-    const { data: { user }, error: authError } = await serverClient.auth.getUser();
+    // Authenticate — reuse user from rate-limit auth above
+    const user = authUser;
 
-    if (authError || !user) {
+    if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 

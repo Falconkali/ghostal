@@ -1,10 +1,8 @@
 import { NextResponse } from "next/server";
 import { createClient as createServerClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
-
-// Max file size: 100 MB
-const MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024;
 
 // Allowed MIME type prefixes
 const ALLOWED_MIME_PREFIXES = ["image/", "video/"];
@@ -24,8 +22,14 @@ const ALLOWED_MIME_TYPES = new Set([
   "video/mpeg",
 ]);
 
-// Cloudinary cloud name from environment (falls back to hardcoded only as last resort)
-const CLOUDINARY_CLOUD = process.env.CLOUDINARY_CLOUD_NAME || "da8jrztp0";
+// Per-plan vault item limits
+const VAULT_LIMITS: Record<string, number> = {
+  free: 10,
+  starter: 30,
+  creator_pro: 100,
+  survival_ai: 200,
+  lifetime: 500,
+};
 
 export async function POST(req: Request) {
   try {
@@ -38,16 +42,48 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // 2. Read form data
+    // 2. Plan vault limit check
+    const adminClient = createAdminClient();
+    const { data: profile } = await adminClient
+      .from("profiles")
+      .select("plan")
+      .eq("id", user.id)
+      .single();
+
+    const userPlan = profile?.plan || "free";
+    const vaultLimit = VAULT_LIMITS[userPlan] ?? 10;
+
+    const { count: existingCount } = await adminClient
+      .from("vault_items")
+      .select("*", { count: "exact", head: true })
+      .eq("user_id", user.id);
+
+    if ((existingCount ?? 0) >= vaultLimit) {
+      return NextResponse.json(
+        {
+          error: `Vault limit reached. Your ${userPlan} plan allows up to ${vaultLimit} items. Upgrade your plan to add more.`,
+        },
+        { status: 403 }
+      );
+    }
+
+    // 3. Cloudinary credentials — fail closed if not configured
+    const CLOUDINARY_CLOUD = process.env.CLOUDINARY_CLOUD_NAME;
+    if (!CLOUDINARY_CLOUD) {
+      console.error("[vault/upload] CLOUDINARY_CLOUD_NAME is not set");
+      return NextResponse.json({ error: "Storage not configured" }, { status: 500 });
+    }
+
+    // 4. Read form data
     const formData = await req.formData();
     const file = formData.get("file") as File | null;
 
-    // 3. Validate file presence
+    // 5. Validate file presence
     if (!file) {
       return NextResponse.json({ error: "No file provided" }, { status: 400 });
     }
 
-    // 4. MIME type validation
+    // 6. MIME type validation
     const mimeType = file.type.toLowerCase();
     if (!ALLOWED_MIME_TYPES.has(mimeType)) {
       const isPrefix = ALLOWED_MIME_PREFIXES.some((p) => mimeType.startsWith(p));
@@ -61,15 +97,17 @@ export async function POST(req: Request) {
       }
     }
 
-    // 5. File size validation
+    // 7. File size validation — Vercel serverless cap is ~4.5MB for request bodies.
+    // For larger files use direct Cloudinary signed uploads from the client.
+    const MAX_FILE_SIZE_BYTES = 4.5 * 1024 * 1024; // 4.5 MB
     if (file.size > MAX_FILE_SIZE_BYTES) {
       return NextResponse.json(
-        { error: "File size exceeds the 100 MB limit." },
+        { error: "File size exceeds the 4.5 MB server limit. Use direct upload for larger files." },
         { status: 413 }
       );
     }
 
-    // 6. Forward to Cloudinary (upload preset scoped to user folder via preset config)
+    // 8. Forward to Cloudinary
     const cloudRes = await fetch(
       `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD}/auto/upload`,
       {

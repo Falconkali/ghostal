@@ -145,7 +145,7 @@ export default function AnalyticsPage() {
         { data: profileRow }
       ] = await Promise.all([
         supabase.from("scheduled_posts").select("*").eq("user_id", user.id).gte("scheduled_at", boundsDate.toISOString()),
-        supabase.from("survival_logs").select("*").eq("user_id", user.id).gte("created_at", boundsDate.toISOString()),
+        supabase.from("survival_logs").select("*").eq("user_id", user.id).gte("timestamp", boundsDate.toISOString()),
         supabase.from("vault_items").select("*").eq("user_id", user.id),
         supabase.from("profiles").select("instagram_handle").eq("id", user.id).single()
       ]);

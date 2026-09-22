@@ -77,7 +77,11 @@ export async function updateSession(request: NextRequest) {
   const isAuthRoute = authPaths.some(p => path === p || path.startsWith(p + "/"));
 
   if (isProtectedRoute && !user) {
-    // Redirect unauthenticated user to login
+    // For API routes, return 401 JSON instead of redirecting to HTML login page
+    if (path.startsWith("/api/")) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    // For page routes, redirect to login
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     return NextResponse.redirect(url);

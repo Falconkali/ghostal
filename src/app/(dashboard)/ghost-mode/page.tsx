@@ -642,7 +642,7 @@ export default function GhostModePage() {
                 </p>
                 <p className="text-xs text-muted-foreground">
                   Autopilot will backfill queue slots from the vault if no posts are scheduled for {config.inactivityThresholdDays}{" "}
-                  day{config.inactivityThresholdDays !== 1 ? "s" : ""}s
+                  day{config.inactivityThresholdDays !== 1 ? "s" : ""}
                 </p>
               </div>
             </div>

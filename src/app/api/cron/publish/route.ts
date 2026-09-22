@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { checkAndPublishDuePosts, runAISurvivalRefill } from "@/lib/automation";
 import { decrypt, encrypt } from "@/lib/crypto";
+import crypto from "crypto";
 
 export const runtime = "nodejs";
 export const maxDuration = 300; // 5 minutes — needed for Instagram container polling (up to 30s per post)
@@ -17,7 +18,11 @@ export async function GET(request: NextRequest) {
     return new Response("Unauthorized — CRON_SECRET not configured", { status: 401 });
   }
 
-  if (authHeader !== `Bearer ${cronSecret}`) {
+  const authHeaderValue = authHeader ?? "";
+  const expected = `Bearer ${cronSecret}`;
+  const validHeader = authHeaderValue.length === expected.length &&
+    crypto.timingSafeEqual(Buffer.from(authHeaderValue), Buffer.from(expected));
+  if (!validHeader) {
     console.warn("Cron Authorization failed: Secret mismatch.");
     return new Response("Unauthorized", { status: 401 });
   }
@@ -29,7 +34,7 @@ export async function GET(request: NextRequest) {
     // 1. Fetch active profiles that have Instagram connected and token/id populated
     const { data: profiles, error: profileError } = await adminClient
       .from("profiles")
-      .select("id, ghost_mode_config, created_at, instagram_token")
+      .select("id, ghost_mode_config, created_at, instagram_token, instagram_token_refreshed_at")
       .eq("instagram_connected", true)
       .not("instagram_token", "is", null)
       .not("instagram_id", "is", null);
@@ -61,29 +66,39 @@ export async function GET(request: NextRequest) {
           emergencySurvivalMode: false,
         }) as any;
 
-        // A. Token Refresh (Weekly prevention of 60-day expiry)
+        // A. Token Refresh — only refresh once every 30 days (Meta rate limit)
+        // Instagram long-lived tokens expire after 60 days; refreshing at 30 days gives a safe margin.
         let currentToken = profile.instagram_token;
         if (currentToken) {
-          try {
-            const decrypted = decrypt(currentToken);
-            // Instagram allows refresh if token is >24h old
-            const refreshUrl = `https://graph.instagram.com/refresh_access_token?grant_type=ig_refresh_token&access_token=${decrypted}`;
-            const refreshRes = await fetch(refreshUrl);
-            const refreshData = await refreshRes.json();
-            
-            if (refreshData.access_token && refreshData.access_token !== decrypted) {
-              // Successfully got a new token, update DB
-              currentToken = encrypt(refreshData.access_token);
-              await adminClient
-                .from("profiles")
-                .update({ instagram_token: currentToken })
-                .eq("id", userId);
-              console.log(`[Cron] Refreshed Instagram token for user ${userId}`);
+          const lastRefreshed = (profile as any).instagram_token_refreshed_at
+            ? new Date((profile as any).instagram_token_refreshed_at).getTime()
+            : 0;
+          const daysSinceRefresh = (Date.now() - lastRefreshed) / (1000 * 60 * 60 * 24);
+
+          if (daysSinceRefresh >= 30) {
+            try {
+              const decrypted = decrypt(currentToken);
+              const refreshUrl = `https://graph.instagram.com/refresh_access_token?grant_type=ig_refresh_token&access_token=${decrypted}`;
+              const refreshRes = await fetch(refreshUrl);
+              const refreshData = await refreshRes.json();
+
+              if (refreshData.access_token && refreshData.access_token !== decrypted) {
+                currentToken = encrypt(refreshData.access_token);
+                await adminClient
+                  .from("profiles")
+                  .update({
+                    instagram_token: currentToken,
+                    instagram_token_refreshed_at: new Date().toISOString(),
+                  })
+                  .eq("id", userId);
+                console.log(`[Cron] Refreshed Instagram token for user ${userId}`);
+              }
+            } catch (tokenErr) {
+              console.error(`[Cron] Token refresh failed for user ${userId}:`, tokenErr);
             }
-          } catch (tokenErr) {
-            console.error(`[Cron] Token refresh failed for user ${userId}:`, tokenErr);
           }
         }
+
 
         // B. Check and publish due posts
         const publishedIds = await checkAndPublishDuePosts(userId, adminClient);

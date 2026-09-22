@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { decrypt } from "@/lib/crypto";
+import crypto from "crypto";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -19,7 +20,11 @@ export async function GET(request: NextRequest) {
   const authHeader = request.headers.get("authorization");
   const cronSecret = process.env.CRON_SECRET;
 
-  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+  const authHeaderValue = authHeader ?? "";
+  const expectedSecret = `Bearer ${cronSecret}`;
+  const validSecret = cronSecret && authHeaderValue.length === expectedSecret.length &&
+    crypto.timingSafeEqual(Buffer.from(authHeaderValue), Buffer.from(expectedSecret));
+  if (!cronSecret || !validSecret) {
     return new Response("Unauthorized", { status: 401 });
   }
 
@@ -74,35 +79,28 @@ export async function GET(request: NextRequest) {
               const commentsData = await commentsRes.json();
               if (commentsData.error) return 0;
 
-              const comments: any[] = commentsData.data ?? [];
-              let upserted = 0;
-
-              await Promise.allSettled(
-                comments.map(async (comment) => {
-                  const { error: upsertError } = await adminClient
-                    .from("webhook_events")
-                    .upsert(
-                      {
-                        event_type: "comment",
-                        instagram_media_id: media.id,
-                        instagram_object_id: comment.id,
-                        idempotency_key: comment.id,
-                        payload: {
-                          id: comment.id,
-                          text: comment.text,
-                          timestamp: comment.timestamp,
-                          from: comment.from ?? {},
-                          media_id: media.id,
-                        },
-                        processed_at: comment.timestamp ?? new Date().toISOString(),
-                        user_id: userId,
-                      },
-                      { onConflict: "idempotency_key", ignoreDuplicates: true }
-                    );
-                  if (!upsertError) upserted++;
-                })
-              );
-              return upserted;
+              const comments = commentsData.data ?? [];
+              if (comments.length === 0) return 0;
+              const rows = comments.map((comment: any) => ({
+                event_type: "comment",
+                instagram_media_id: media.id,
+                instagram_object_id: comment.id,
+                idempotency_key: comment.id,
+                payload: {
+                  id: comment.id,
+                  text: comment.text,
+                  timestamp: comment.timestamp,
+                  from: comment.from ?? {},
+                  media_id: media.id,
+                },
+                processed_at: comment.timestamp ?? new Date().toISOString(),
+                user_id: userId,
+              }));
+              // Single batched upsert — avoids N+1 query storm
+              const { error: upsertError } = await adminClient
+                .from("webhook_events")
+                .upsert(rows, { onConflict: "idempotency_key", ignoreDuplicates: true });
+              return upsertError ? 0 : rows.length;
             })
           );
 

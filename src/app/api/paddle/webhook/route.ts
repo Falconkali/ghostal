@@ -96,16 +96,38 @@ export async function POST(request: NextRequest) {
       case EventName.SubscriptionUpdated: {
         const sub = event.data as any;
         const customData = sub.customData as Record<string, string> | null;
-        const userId = customData?.userId;
-        if (!userId) break;
-
+        let userId = customData?.userId;
         const plan = getPlanFromItems(sub.items ?? []);
         const status = sub.status;
+        // Keep paid plan during past_due (grace period) — only drop to free on canceled/paused
+        const isPaid = status === "active" || status === "trialing" || status === "past_due";
+
+        if (!userId) {
+          // Fallback: look up user by paddle_subscription_id when customData is missing
+          const { data: profileBySubId } = await supabase
+            .from("profiles")
+            .select("id")
+            .eq("paddle_subscription_id", sub.id)
+            .maybeSingle();
+          if (!profileBySubId?.id) break;
+          await supabase
+            .from("profiles")
+            .update({
+              plan: isPaid ? plan : "free",
+              subscription_status: status,
+              paddle_subscription_id: sub.id,
+              paddle_customer_id: sub.customerId,
+              payment_provider: "paddle",
+            })
+            .eq("id", profileBySubId.id);
+          break;
+        }
 
         await supabase
           .from("profiles")
           .update({
-            plan: status === "active" || status === "trialing" ? plan : "free",
+            plan: isPaid ? plan : "free",
+            subscription_status: status,
             paddle_subscription_id: sub.id,
             paddle_customer_id: sub.customerId,
             payment_provider: "paddle",
@@ -113,6 +135,7 @@ export async function POST(request: NextRequest) {
           .eq("id", userId);
         break;
       }
+
 
       // ── Subscription cancelled ───────────────────────────────────────
       case EventName.SubscriptionCanceled: {

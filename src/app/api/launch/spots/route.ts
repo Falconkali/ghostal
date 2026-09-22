@@ -20,10 +20,10 @@ export async function GET() {
       return NextResponse.json({ remaining: 100, total: 100 });
     }
 
-    return NextResponse.json({
-      remaining: data.spots_remaining,
-      total: data.spots_total,
-    });
+    return NextResponse.json(
+      { remaining: data.spots_remaining, total: data.spots_total },
+      { headers: { "Cache-Control": "s-maxage=60, stale-while-revalidate=300" } }
+    );
   } catch {
     return NextResponse.json({ remaining: 100, total: 100 });
   }

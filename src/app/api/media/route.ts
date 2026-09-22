@@ -23,9 +23,11 @@ function isAllowedHost(url: string): boolean {
   try {
     const { hostname, protocol } = new URL(url);
     if (protocol !== "https:") return false;
-    return ALLOWED_HOSTS.some(
-      (allowed) => hostname === allowed.replace(/^\./, "") || hostname.endsWith(allowed)
-    );
+    return ALLOWED_HOSTS.some((allowed) => {
+      const bare = allowed.replace(/^\./, "");
+      // Exact match OR subdomain match with a dot boundary (prevents attacker-foo.com)
+      return hostname === bare || hostname.endsWith("." + bare);
+    });
   } catch {
     return false;
   }
@@ -66,15 +68,14 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    const blob = await res.blob();
+    const contentType = res.headers.get("content-type") || "application/octet-stream";
     const headers = new Headers();
-    headers.set(
-      "Content-Type",
-      res.headers.get("content-type") || "application/octet-stream"
-    );
+    headers.set("Content-Type", contentType);
+    headers.set("Content-Disposition", "attachment");
     headers.set("Cache-Control", "public, max-age=31536000, immutable");
 
-    return new NextResponse(blob, { status: 200, headers });
+    // Stream the response body directly — avoid loading large files into memory
+    return new NextResponse(res.body, { status: 200, headers });
   } catch (error) {
     console.error("[media proxy] Error:", error);
     return new NextResponse("Internal Server Error", { status: 500 });

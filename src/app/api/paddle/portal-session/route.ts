@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient as createServerClient } from "@/lib/supabase/server";
 import { getPaddleInstance } from "@/utils/paddle/get-paddle-instance";
+import { validateCsrfOrigin } from "@/lib/csrf";
 
 export const runtime = "nodejs";
 
@@ -17,7 +18,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // 2. Fetch the user's profile and Paddle customer ID
+    // CSRF protection
+    if (!validateCsrfOrigin(request)) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+
     const { data: profile, error: profileError } = await serverClient
       .from("profiles")
       .select("paddle_customer_id, paddle_subscription_id")
@@ -46,8 +52,9 @@ export async function POST(request: NextRequest) {
           perPage: 1,
         });
         const customer = await customerCollection.next();
-        if (customer && customer.length > 0) {
-          customerId = customer[0].id;
+        const exactMatch = customer?.find((c: any) => c.email === user.email);
+        if (exactMatch) {
+          customerId = exactMatch.id;
           // Save customerId to profile
           await serverClient
             .from("profiles")

@@ -97,10 +97,8 @@ export default function SignupPage() {
             .maybeSingle();
 
           if (referrerProfile?.id) {
-            // Get the newly signed-up user's session
             const { data: { session } } = await supabase.auth.getSession();
             if (session?.user?.id) {
-              // Update profiles: set referred_by + create a referral row
               await supabase
                 .from("profiles")
                 .update({ referred_by: referrerProfile.id })
@@ -112,12 +110,13 @@ export default function SignupPage() {
                 referred_email: email,
                 status: "pending",
               });
+              // Only clear pending referral if attribution succeeded
+              localStorage.removeItem("pending_referral");
             }
+            // If no session (email-confirm flow), keep pending_referral for callback/page.tsx
           }
         } catch (refErr) {
           console.warn("Referral attribution failed (non-blocking):", refErr);
-        } finally {
-          localStorage.removeItem("pending_referral");
         }
       }
 

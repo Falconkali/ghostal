@@ -78,6 +78,20 @@ export async function checkAndPublishDuePosts(userId: string, client = supabase,
   const publishedIds: string[] = [];
 
   for (const post of duePosts) {
+    // Atomically claim the post — prevents double-publishing by concurrent workers
+    const { data: claimed } = await client
+      .from("scheduled_posts")
+      .update({ status: "publishing" })
+      .eq("id", post.id)
+      .eq("status", "scheduled")
+      .select("id")
+      .maybeSingle();
+
+    if (!claimed) {
+      console.log(`[automation] Post ${post.id} already claimed by another worker, skipping`);
+      continue;
+    }
+
     let success = false;
     let logDescription = "";
     let statusToSet: "posted" | "failed" = "posted";

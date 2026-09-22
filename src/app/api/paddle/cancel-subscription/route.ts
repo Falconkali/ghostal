@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient as createServerClient } from "@/lib/supabase/server";
 import { getPaddleInstance } from "@/utils/paddle/get-paddle-instance";
+import { validateCsrfOrigin } from "@/lib/csrf";
 
 export const runtime = "nodejs";
 
@@ -17,7 +18,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // 2. Fetch the user's profile and Paddle subscription ID
+    // CSRF protection — state-changing endpoint
+    if (!validateCsrfOrigin(request)) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+
     const { data: profile, error: profileError } = await serverClient
       .from("profiles")
       .select("paddle_subscription_id, paddle_customer_id, plan")
