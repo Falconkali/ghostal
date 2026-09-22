@@ -168,9 +168,16 @@ export async function GET(request: NextRequest) {
       return NextResponse.redirect(`${redirectUrl}?error=database_save_failed`);
     }
 
-    // Clear the OAuth state cookie — it's single-use
+    // Clear the OAuth state cookie — it's single-use.
+    // Must use matching flags (SameSite=None, Secure) so the browser actually deletes it.
     const successRedirect = NextResponse.redirect(`${redirectUrl}?success=instagram_connected`);
-    successRedirect.cookies.set("ig_oauth_state", "", { path: "/", maxAge: 0 });
+    successRedirect.cookies.set("ig_oauth_state", "", {
+      httpOnly: true,
+      secure: true,
+      sameSite: "none",
+      path: "/",
+      maxAge: 0,
+    });
     return successRedirect;
   } catch (err: any) {
     console.error("Unhandled error in callback handler:", err);

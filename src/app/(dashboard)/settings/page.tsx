@@ -499,26 +499,11 @@ function SettingsContent() {
       }
     } else {
       setConnecting(true);
-      // Instagram Business Login — uses instagram.com/oauth/authorize with the Instagram App ID.
-      const instagramAppId = process.env.NEXT_PUBLIC_INSTAGRAM_APP_ID || process.env.NEXT_PUBLIC_META_APP_ID;
-      if (!instagramAppId) {
-        setErrorMessage("Instagram App ID is not configured. Please contact support.");
-        setConnecting(false);
-        return;
-      }
-      const redirectUri = `${window.location.origin}/api/auth/instagram/callback`;
-      const scope = "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights";
-      // Generate a random state token for CSRF protection (OAuth 2.0 §10.12)
-      const stateToken = Array.from(crypto.getRandomValues(new Uint8Array(16)))
-        .map((b) => b.toString(16).padStart(2, "0"))
-        .join("");
-      // Store state in BOTH sessionStorage (client backup) AND a cookie so the
-      // server-side callback route can read and verify it.
-      sessionStorage.setItem("ig_oauth_state", stateToken);
-      document.cookie = `ig_oauth_state=${stateToken}; path=/; SameSite=Lax; Max-Age=600`;
-      const oauthUrl = `https://www.instagram.com/oauth/authorize?client_id=${instagramAppId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${scope}&response_type=code&state=${stateToken}`;
-      
-      window.location.href = oauthUrl;
+      // Redirect to the server-side initiate route which sets the state cookie
+      // reliably (HttpOnly, SameSite=None, Secure) before redirecting to Instagram.
+      // This avoids the oauth_state_mismatch error caused by client-side cookies
+      // being dropped during the cross-origin Instagram → ghostal.xyz redirect.
+      window.location.href = "/api/auth/instagram/initiate";
     }
   };
 

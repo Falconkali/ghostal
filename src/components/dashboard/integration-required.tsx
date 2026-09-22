@@ -231,26 +231,9 @@ export default function IntegrationRequired({
     setError(null);
     setConnecting(true);
     setShowConsent(false);
-
-    const instagramAppId = process.env.NEXT_PUBLIC_INSTAGRAM_APP_ID;
-    if (!instagramAppId) {
-      setError("Instagram App ID is not configured. Please contact support.");
-      setConnecting(false);
-      return;
-    }
-
-    const redirectUri = `${window.location.origin}/api/auth/instagram/callback`;
-    const scope =
-      "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights";
-
-    const stateToken = Array.from(crypto.getRandomValues(new Uint8Array(16)))
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("");
-    sessionStorage.setItem("ig_oauth_state", stateToken);
-
-    const oauthUrl = `https://www.instagram.com/oauth/authorize?client_id=${instagramAppId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${scope}&response_type=code&state=${stateToken}`;
-
-    window.location.href = oauthUrl;
+    // Redirect to the server-side initiate route which sets the state cookie
+    // reliably (HttpOnly, SameSite=None, Secure) before redirecting to Instagram.
+    window.location.href = "/api/auth/instagram/initiate";
   };
 
   return (
