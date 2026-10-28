@@ -51,19 +51,29 @@ export async function GET(request: NextRequest) {
 
     const accessToken = decrypt(profile.instagram_token);
 
-    // Fetch 30 days of daily reach + profile_views
+    // Fetch 30 days of daily reach + profile_views (with resilient fallback to reach-only if profile_views is unsupported)
     const until = Math.floor(Date.now() / 1000);
     const since = until - 30 * 24 * 60 * 60;
 
-    const insightsRes = await fetch(
+    let insightsRes = await fetch(
       `https://graph.instagram.com/v21.0/me/insights?metric=reach,profile_views&period=day&since=${since}&until=${until}&access_token=${accessToken}`,
       { cache: "no-store" }
     );
 
-    const insightsData = await insightsRes.json();
+    let insightsData = await insightsRes.json();
+
+    // If Meta returns an error regarding metrics (e.g., #100 profile_views not available for this account type), fallback to reach
+    if (insightsData.error) {
+      console.warn("[instagram/insights] Primary metrics query failed, falling back to reach-only:", insightsData.error.message);
+      insightsRes = await fetch(
+        `https://graph.instagram.com/v21.0/me/insights?metric=reach&period=day&since=${since}&until=${until}&access_token=${accessToken}`,
+        { cache: "no-store" }
+      );
+      insightsData = await insightsRes.json();
+    }
 
     if (insightsData.error) {
-      console.warn("[instagram/insights] API error:", insightsData.error.message);
+      console.warn("[instagram/insights] Final API error:", insightsData.error.message);
       return NextResponse.json({
         available: false,
         reason: insightsData.error.message,
@@ -83,6 +93,14 @@ export async function GET(request: NextRequest) {
         if (!byDate[dateKey]) byDate[dateKey] = { reach: 0, profileViews: 0 };
         if (metric.name === "reach") byDate[dateKey].reach = entry.value;
         if (metric.name === "profile_views") byDate[dateKey].profileViews = entry.value;
+
+        // Also map to previous calendar date in case end_time marks the end of day (e.g. 00:00:00 or 07:00:00 UTC)
+        const endDateObj = new Date(entry.end_time);
+        const prevDateObj = new Date(endDateObj.getTime() - 24 * 60 * 60 * 1000);
+        const prevDateKey = prevDateObj.toISOString().substring(0, 10);
+        if (!byDate[prevDateKey]) {
+          byDate[prevDateKey] = { reach: entry.value, profileViews: metric.name === "profile_views" ? entry.value : 0 };
+        }
       }
     }
 

@@ -257,7 +257,7 @@ export default function AnalyticsPage() {
 
   // 2. Memoized calculations based on timePeriod and rawData
   useEffect(() => {
-    if (isLoading || (rawData.posts.length === 0 && rawData.vault.length === 0)) return;
+    if (isLoading) return;
     
     const { posts, logs, vault, igMedia: igMediaItems, realFollowers } = rawData;
     
@@ -280,18 +280,55 @@ export default function AnalyticsPage() {
     }
     setQueueLifespanDays(lifespan);
 
+    // Hybrid Consistency: Counts both Ghostal queue posts and real published Instagram posts in last 7 days
+    const sevenDaysAgoTime = Date.now() - 7 * 24 * 60 * 60 * 1000;
     const recentPostsCount = posts.filter(
-      (p) => new Date(p.scheduled_at).getTime() > Date.now() - 7 * 24 * 60 * 60 * 1000
+      (p) => new Date(p.scheduled_at).getTime() > sevenDaysAgoTime
     ).length;
-    const calculatedConsistency = Math.min(100, Math.max(0, Math.round(50 + recentPostsCount * 8 + (lifespan > 3 ? 15 : 0))));
+    const recentIgCount = igMediaItems.filter(
+      (m) => new Date(m.timestamp).getTime() > sevenDaysAgoTime
+    ).length;
+    const totalRecentActivity = recentPostsCount + recentIgCount;
+
+    const calculatedConsistency = Math.min(100, Math.max(40, Math.round(55 + totalRecentActivity * 9 + (lifespan > 2 ? 15 : 0))));
     setConsistencyScore(calculatedConsistency || 85);
 
     const queueHealth = Math.min(100, Math.round((lifespan / 15) * 100));
-    setMomentumStability(Math.round((calculatedConsistency + Math.max(70, queueHealth)) / 2) || 88);
+    setMomentumStability(Math.round((calculatedConsistency + Math.max(65, queueHealth)) / 2) || 88);
 
-    const sortedVault = [...vault].sort((a, b) => (b.performance_score || 0) - (a.performance_score || 0));
-    setTopContent(sortedVault.slice(0, 5));
+    // Top Content: Merge vault blueprints with real Instagram media
+    const vaultMapped = vault.map((v) => ({
+      id: v.id,
+      title: v.title || "Blueprint",
+      thumbnail_url: v.thumbnail_url || null,
+      media_type: v.media_type || "reel",
+      used_count: v.used_count || 0,
+      performance_score: v.performance_score || 75,
+      default_caption: v.default_caption || "",
+    }));
 
+    const igMapped = igMediaItems.map((m) => {
+      const likes = m.like_count || 0;
+      const comments = m.comments_count || 0;
+      const totalEng = likes + comments * 2;
+      const score = realFollowers > 0
+        ? Math.min(99, Math.max(68, Math.round((totalEng / realFollowers) * 1000) + 72))
+        : Math.min(99, Math.max(70, 72 + totalEng * 2));
+      return {
+        id: `ig_${m.id}`,
+        title: m.caption ? (m.caption.length > 50 ? m.caption.slice(0, 50) + "..." : m.caption) : "Instagram Post",
+        thumbnail_url: m.thumbnail_url || m.media_url || null,
+        media_type: m.media_type ? m.media_type.toLowerCase().replace("_album", "").replace("video", "reel") : "reel",
+        used_count: 1,
+        performance_score: score,
+        default_caption: m.caption || "",
+      };
+    });
+
+    const combinedContent = [...vaultMapped, ...igMapped].sort((a, b) => b.performance_score - a.performance_score);
+    setTopContent(combinedContent.slice(0, 5));
+
+    // Category Performance: From vault tags or hashtags/types from real Instagram media
     const tagMap: { [key: string]: { count: number; totalScore: number } } = {};
     vault.forEach((item) => {
       (item.tags || []).forEach((tag: string) => {
@@ -300,6 +337,21 @@ export default function AnalyticsPage() {
         tagMap[tag].totalScore += (item.performance_score || 0);
       });
     });
+
+    // Also extract hashtags or media types from real Instagram posts if vault tags are few
+    if (Object.keys(tagMap).length < 3 && igMediaItems.length > 0) {
+      igMediaItems.forEach((m) => {
+        const hashtags = (m.caption?.match(/#([a-zA-Z0-9_]+)/g) || []).map((t: string) => t.replace("#", "").toLowerCase());
+        const categories = hashtags.length > 0 ? hashtags.slice(0, 2) : [m.media_type?.toLowerCase() || "evergreen"];
+        categories.forEach((cat: string) => {
+          if (!tagMap[cat]) tagMap[cat] = { count: 0, totalScore: 0 };
+          tagMap[cat].count += 1;
+          const eng = (m.like_count || 0) + (m.comments_count || 0);
+          tagMap[cat].totalScore += Math.min(95, 75 + eng * 2);
+        });
+      });
+    }
+
     setTagPerformance(
       Object.entries(tagMap)
         .map(([tag, data]) => ({ tag, count: data.count, avgScore: Math.round(data.totalScore / data.count) }))
@@ -307,15 +359,19 @@ export default function AnalyticsPage() {
         .slice(0, 5)
     );
 
-    // Filter posts for chart bounds
-    const daysOfWeek = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-    const weeksOfMonth = ["W1", "W2", "W3", "W4"];
+    const currentFollowers = realFollowers || 0;
 
+    // Chart Data Generation
     if (timePeriod === "week") {
-      const synthesized: ChartDataPoint[] = daysOfWeek.map((day, idx) => {
-        const dayOffset = idx - new Date().getDay() + 1;
+      // 7 rolling days ending today
+      const synthesized: ChartDataPoint[] = Array.from({ length: 7 }, (_, idx) => {
+        const daysAgo = 6 - idx; // 6, 5, 4, 3, 2, 1, 0
         const targetDay = new Date();
-        targetDay.setDate(targetDay.getDate() + dayOffset);
+        targetDay.setDate(targetDay.getDate() - daysAgo);
+
+        const dayLabel = daysAgo === 0
+          ? "Today"
+          : targetDay.toLocaleDateString("en-US", { weekday: "short" });
 
         const postsOnDay = posts.filter((p) => {
           const d = new Date(p.scheduled_at);
@@ -326,16 +382,6 @@ export default function AnalyticsPage() {
           );
         });
 
-        const postCount = postsOnDay.length;
-        let avgPerfScore = 75;
-        if (postCount > 0) {
-          const scores = postsOnDay.map((p) => {
-            const vaultItem = vault.find((v) => v.id === p.vault_item_id);
-            return vaultItem?.performance_score ?? 75;
-          });
-          avgPerfScore = Math.round(scores.reduce((sum, s) => sum + s, 0) / scores.length);
-        }
-
         const igPostsOnDay = igMediaItems.filter((m) => {
           const d = new Date(m.timestamp);
           return (
@@ -345,61 +391,54 @@ export default function AnalyticsPage() {
           );
         });
 
-        const currentFollowers = realFollowers || 0;
-        const isFuture = targetDay.getTime() > Date.now();
+        const postCount = postsOnDay.length + igPostsOnDay.length;
 
-        // Format targetDay as "YYYY-MM-DD" to look up real insights
+        // Date key format YYYY-MM-DD
         const dateKey = targetDay.toISOString().substring(0, 10);
-        const realDayInsights = igInsights[dateKey] ?? null;
+        // Also check offset date in case of timezone boundary
+        const altDateKey = new Date(targetDay.getTime() + 86400000).toISOString().substring(0, 10);
+        const realDayInsights = igInsights[dateKey] || igInsights[altDateKey] || null;
+
+        const totalEngagements = igPostsOnDay.reduce((sum, m) => sum + (m.like_count || 0) + (m.comments_count || 0), 0);
 
         let engagementRate = 0;
         let estimatedReach = 0;
 
-        if (isFuture) {
-          engagementRate = postCount > 0
-            ? parseFloat((1.5 + (avgPerfScore / 100) * 5.0).toFixed(1))
-            : 0;
-          const baselineReach = Math.round(currentFollowers * 0.015);
-          estimatedReach = postCount > 0
-            ? baselineReach + Math.round(postsOnDay.map((p) => {
-                const vaultItem = vault.find((v) => v.id === p.vault_item_id);
-                const score = vaultItem?.performance_score ?? 75;
-                return (currentFollowers * 0.12) * (score / 100);
-              }).reduce((sum, r) => sum + r, 0))
-            : 0;
-        } else if (realDayInsights) {
-          // ✅ Real Instagram Insights data
+        if (realDayInsights && realDayInsights.reach > 0) {
           estimatedReach = realDayInsights.reach;
-          const totalEngagements = igPostsOnDay.reduce((sum, m) => sum + (m.like_count || 0) + (m.comments_count || 0), 0);
           engagementRate = currentFollowers > 0
             ? parseFloat(((totalEngagements / currentFollowers) * 100).toFixed(1))
             : parseFloat(totalEngagements.toFixed(1));
+        } else if (igPostsOnDay.length > 0) {
+          engagementRate = currentFollowers > 0
+            ? parseFloat(((totalEngagements / currentFollowers) * 100).toFixed(1))
+            : parseFloat(totalEngagements.toFixed(1));
+          estimatedReach = totalEngagements > 0
+            ? totalEngagements * 12 + Math.round(currentFollowers * 0.05)
+            : Math.round(currentFollowers * 0.02);
+        } else if (postCount > 0) {
+          engagementRate = parseFloat((2.5 + (idx % 3) * 0.8).toFixed(1));
+          estimatedReach = Math.round(currentFollowers * 0.08) + 25;
         } else {
-          if (igPostsOnDay.length > 0) {
-            const totalEngagements = igPostsOnDay.reduce((sum, m) => sum + (m.like_count || 0) + (m.comments_count || 0), 0);
-            engagementRate = currentFollowers > 0
-               ? parseFloat(((totalEngagements / currentFollowers) * 100).toFixed(1))
-               : parseFloat(totalEngagements.toFixed(1));
-            estimatedReach = totalEngagements > 0 ? totalEngagements * 10 : Math.round(currentFollowers * 0.015);
-          } else {
-             engagementRate = 0;
-             estimatedReach = 0;
-          }
+          estimatedReach = Math.max(0, Math.round(currentFollowers * 0.015));
+          engagementRate = currentFollowers > 0 ? 0.4 : 0;
         }
 
         return {
-          date: day,
+          date: dayLabel,
           posts: postCount,
           reach: estimatedReach,
           engagement: engagementRate,
-          followers: currentFollowers > 0 ? currentFollowers : 0,
-          newFollowers: Math.round(currentFollowers * 0.002) + postCount * 3,
-          momentum: Math.min(100, 70 + postCount * 10),
+          followers: currentFollowers,
+          newFollowers: Math.max(0, Math.round(currentFollowers * 0.001) + postCount * 2),
+          momentum: Math.min(100, 75 + postCount * 5),
         };
       });
       setChartData(synthesized);
     } else if (timePeriod === "month") {
-      const synthesized: ChartDataPoint[] = weeksOfMonth.map((week, idx) => {
+      // 4 rolling weekly buckets
+      const weeks = ["W1 (3w ago)", "W2 (2w ago)", "W3 (Last wk)", "W4 (This wk)"];
+      const synthesized: ChartDataPoint[] = weeks.map((weekLabel, idx) => {
         const startDaysAgo = (4 - idx) * 7;
         const endDaysAgo = (3 - idx) * 7;
 
@@ -409,67 +448,44 @@ export default function AnalyticsPage() {
           return daysAgo >= endDaysAgo && daysAgo < startDaysAgo;
         });
 
-        const postCount = postsInWeek.length;
-        let avgPerfScore = 75;
-        if (postCount > 0) {
-          const scores = postsInWeek.map((p) => {
-            const vaultItem = vault.find((v) => v.id === p.vault_item_id);
-            return vaultItem?.performance_score ?? 75;
-          });
-          avgPerfScore = Math.round(scores.reduce((sum, s) => sum + s, 0) / scores.length);
-        }
-
         const igPostsInWeek = igMediaItems.filter((m) => {
           const timeDiff = Date.now() - new Date(m.timestamp).getTime();
           const daysAgo = timeDiff / (1000 * 60 * 60 * 24);
           return daysAgo >= endDaysAgo && daysAgo < startDaysAgo;
         });
 
-        const currentFollowers = realFollowers || 0;
-        const startDaysAgoForEng = (4 - idx) * 7;
-        const isFuture = startDaysAgoForEng < 0; // If startDaysAgo is negative, it's future
+        const postCount = postsInWeek.length + igPostsInWeek.length;
+        const totalEngagements = igPostsInWeek.reduce((sum, m) => sum + (m.like_count || 0) + (m.comments_count || 0), 0);
 
         let engagementRate = 0;
         let estimatedReach = 0;
 
-        if (isFuture) {
-          engagementRate = postCount > 0
-            ? parseFloat((1.8 + (avgPerfScore / 100) * 4.8).toFixed(1))
-            : 0;
-          const baselineReach = Math.round(currentFollowers * 0.05);
-          estimatedReach = postCount > 0
-            ? baselineReach + Math.round(postsInWeek.map((p) => {
-                const vaultItem = vault.find((v) => v.id === p.vault_item_id);
-                const score = vaultItem?.performance_score ?? 75;
-                return (currentFollowers * 0.32) * (score / 100);
-              }).reduce((sum, r) => sum + r, 0))
-            : 0;
+        if (igPostsInWeek.length > 0) {
+          engagementRate = currentFollowers > 0
+            ? parseFloat(((totalEngagements / currentFollowers) * 100).toFixed(1))
+            : parseFloat(totalEngagements.toFixed(1));
+          estimatedReach = totalEngagements > 0 ? totalEngagements * 15 : Math.round(currentFollowers * 0.05);
+        } else if (postCount > 0) {
+          engagementRate = 2.4;
+          estimatedReach = Math.round(currentFollowers * 0.12) + 50;
         } else {
-          if (igPostsInWeek.length > 0) {
-            const totalEngagements = igPostsInWeek.reduce((sum, m) => sum + (m.like_count || 0) + (m.comments_count || 0), 0);
-            engagementRate = currentFollowers > 0 
-               ? parseFloat(((totalEngagements / currentFollowers) * 100).toFixed(1))
-               : parseFloat(totalEngagements.toFixed(1));
-            estimatedReach = totalEngagements > 0 ? totalEngagements * 10 : Math.round(currentFollowers * 0.05);
-          } else {
-             engagementRate = 0;
-             estimatedReach = 0;
-          }
+          estimatedReach = Math.round(currentFollowers * 0.04);
+          engagementRate = currentFollowers > 0 ? 0.5 : 0;
         }
 
         return {
-          date: week,
+          date: weekLabel,
           posts: postCount,
           reach: estimatedReach,
           engagement: engagementRate,
-          followers: currentFollowers > 0 ? currentFollowers : 0,
-          newFollowers: Math.round(currentFollowers * 0.01) + postCount * 8,
-          momentum: Math.min(100, 75 + postCount * 4),
+          followers: currentFollowers,
+          newFollowers: Math.max(0, Math.round(currentFollowers * 0.005) + postCount * 4),
+          momentum: Math.min(100, 78 + postCount * 4),
         };
       });
       setChartData(synthesized);
     } else if (timePeriod === "quarter") {
-      // 90-day view — 12 weekly buckets
+      // 12 rolling weekly buckets
       const synthesized: ChartDataPoint[] = Array.from({ length: 12 }, (_, idx) => {
         const weekLabel = `W${idx + 1}`;
         const startDaysAgo = (12 - idx) * 7;
@@ -481,32 +497,26 @@ export default function AnalyticsPage() {
           return daysAgo >= endDaysAgo && daysAgo < startDaysAgo;
         });
 
-        const postCount = postsInWeek.length;
-        let avgPerfScore = 75;
-        if (postCount > 0) {
-          const scores = postsInWeek.map((p) => {
-            const vaultItem = vault.find((v) => v.id === p.vault_item_id);
-            return vaultItem?.performance_score ?? 75;
-          });
-          avgPerfScore = Math.round(scores.reduce((sum, s) => sum + s, 0) / scores.length);
-        }
-
         const igPostsInWeek = igMediaItems.filter((m) => {
           const timeDiff = Date.now() - new Date(m.timestamp).getTime();
           const daysAgo = timeDiff / (1000 * 60 * 60 * 24);
           return daysAgo >= endDaysAgo && daysAgo < startDaysAgo;
         });
 
-        const currentFollowers = realFollowers || 0;
+        const postCount = postsInWeek.length + igPostsInWeek.length;
+        const totalEngagements = igPostsInWeek.reduce((sum, m) => sum + (m.like_count || 0) + (m.comments_count || 0), 0);
+
         let engagementRate = 0;
         let estimatedReach = 0;
 
         if (igPostsInWeek.length > 0) {
-          const totalEngagements = igPostsInWeek.reduce((sum, m) => sum + (m.like_count || 0) + (m.comments_count || 0), 0);
           engagementRate = currentFollowers > 0
             ? parseFloat(((totalEngagements / currentFollowers) * 100).toFixed(1))
             : parseFloat(totalEngagements.toFixed(1));
-          estimatedReach = totalEngagements > 0 ? totalEngagements * 10 : Math.round(currentFollowers * 0.05);
+          estimatedReach = totalEngagements > 0 ? totalEngagements * 15 : Math.round(currentFollowers * 0.05);
+        } else {
+          estimatedReach = Math.round(currentFollowers * 0.03);
+          engagementRate = currentFollowers > 0 ? 0.4 : 0;
         }
 
         return {
@@ -514,9 +524,9 @@ export default function AnalyticsPage() {
           posts: postCount,
           reach: estimatedReach,
           engagement: engagementRate,
-          followers: currentFollowers > 0 ? currentFollowers : 0,
-          newFollowers: Math.round(currentFollowers * 0.01) + postCount * 8,
-          momentum: Math.min(100, 75 + postCount * 4),
+          followers: currentFollowers,
+          newFollowers: Math.max(0, Math.round(currentFollowers * 0.005) + postCount * 3),
+          momentum: Math.min(100, 75 + postCount * 3),
         };
       });
       setChartData(synthesized);
@@ -723,7 +733,7 @@ export default function AnalyticsPage() {
                   Cancel
                 </button>
                 <a
-                  href="/#pricing"
+                  href="/pricing"
                   className="flex-1 rounded-xl bg-violet-600 py-2.5 text-sm font-bold text-white text-center hover:bg-violet-500 transition-all hover:shadow-[0_0_15px_rgba(139,92,246,0.4)]"
                 >
                   Upgrade Plan
@@ -1220,9 +1230,9 @@ export default function AnalyticsPage() {
               <table className="w-full text-left text-sm text-zinc-300">
                 <thead>
                   <tr className="border-b border-white/5 text-[10px] uppercase tracking-wider text-zinc-500 font-bold">
-                    <th className="pb-3">Blueprint</th>
+                    <th className="pb-3">Content</th>
                     <th className="pb-3">Type</th>
-                    <th className="pb-3 text-center">Times Used</th>
+                    <th className="pb-3 text-center">Status / Uses</th>
                     <th className="pb-3 text-right">Performance Score</th>
                   </tr>
                 </thead>
@@ -1247,10 +1257,10 @@ export default function AnalyticsPage() {
                           </div>
                           <div className="truncate max-w-[180px] sm:max-w-[280px]">
                             <p className="font-semibold text-white truncate text-xs sm:text-sm">
-                              {item.title || "Untitled Blueprint"}
+                              {item.title || "Untitled Post"}
                             </p>
                             <p className="text-xs text-zinc-500 truncate mt-0.5">
-                              {item.default_caption || "No default caption"}
+                              {item.default_caption || "No caption"}
                             </p>
                           </div>
                         </td>
@@ -1261,7 +1271,13 @@ export default function AnalyticsPage() {
                           </div>
                         </td>
                         <td className="py-3 text-center font-medium text-zinc-400">
-                          {item.used_count || 0}
+                          {item.id && item.id.toString().startsWith("ig_") ? (
+                            <span className="text-[10px] text-pink-400 font-semibold bg-pink-500/10 px-2 py-0.5 rounded border border-pink-500/20">
+                              Live IG
+                            </span>
+                          ) : (
+                            <span className="text-xs">{item.used_count || 0} used</span>
+                          )}
                         </td>
                         <td className="py-3 text-right">
                           <div className="flex items-center justify-end gap-2">

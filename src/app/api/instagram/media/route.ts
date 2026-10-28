@@ -50,10 +50,9 @@ export async function GET(request: NextRequest) {
     const accessToken = decrypt(profile.instagram_token);
 
     // Fetch real engagement data from Instagram Graph API
-    // like_count and comments_count are available via basic scope on Graph API for professional accounts.
-    // Reach/Impressions still require the separate insights edge.
+    // like_count, comments_count, media_url, thumbnail_url for visual and metrics rendering
     const mediaRes = await fetch(
-      `https://graph.instagram.com/v21.0/me/media?fields=id,timestamp,media_type,caption,permalink,like_count,comments_count&limit=50&access_token=${accessToken}`,
+      `https://graph.instagram.com/v21.0/me/media?fields=id,timestamp,media_type,caption,permalink,like_count,comments_count,media_url,thumbnail_url&limit=50&access_token=${accessToken}`,
       { next: { revalidate: 0 } }
     );
 
